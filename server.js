@@ -5,9 +5,10 @@ require('dotenv').config();
 
 const app = express();
 //const cors = require('cors'); //ถ้ารันในเครื่องต้องปิดตัวนี้
-app.use(cors()); // อนุญาตให้ทุกโดเมนดึงข้อมูลจาก API นี้ได้
-
-
+app.use(cors({
+    origin: ['http://localhost:5100', 'https://run9.app'], 
+    credentials: true
+}));
 
 // [อัปเดตสำคัญ!] ขยายขนาดประตูรับข้อมูลของ Node.js ให้รองรับรูปภาพ (Base64) ที่มีขนาดใหญ่ได้สูงสุด 10MB
 // ถ้าไม่ใส่ 2 บรรทัดนี้ อัปโหลดรูปไปแล้วระบบจะฟ้อง Error ว่า Payload Too Large ครับ
