@@ -6,7 +6,8 @@ require('dotenv').config();
 const app = express();
 //const cors = require('cors'); //ถ้ารันในเครื่องต้องปิดตัวนี้
 app.use(cors({
-    origin: ['http://localhost:5100', 'https://run9.app'], 
+    origin: ['https://run9.app'], // อนุญาตเฉพาะเว็บเรา
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }));
 
