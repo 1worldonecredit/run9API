@@ -4,7 +4,7 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-//const cors = require('cors'); //ถ้ารันในเครื่องต้องปิดตัวนี้
+const cors = require('cors'); //ถ้ารันในเครื่องต้องปิดตัวนี้
 app.use(cors()); // อนุญาตให้ทุกโดเมนดึงข้อมูลจาก API นี้ได้
 
 
@@ -1706,10 +1706,9 @@ app.post('/api/game/play', async (req, res) => {
 
 
 
-// ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้าเปิดในคอมเราให้ใช้ 5100
-//const port = process.env.PORT || 5100; 
-//app.listen(port, () => {
+ //ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้าเปิดในคอมเราให้ใช้ 5100/const port = process.env.PORT || 5100; 
+app.listen(port, () => {
     console.lang(`Server running on port ${port}`);
-//});
-const PORT = process.env.PORT || 5100;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+});
+//const PORT = process.env.PORT || 5100;
+//app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
