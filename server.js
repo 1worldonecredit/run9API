@@ -1413,7 +1413,7 @@ app.post('/api/admin/statements', async (req, res) => {
 // ==============================================================
 // 🌟 API (Admin): 2. ดึงประวัติ Statement ทั้งหมดมาแสดงเป็นตาราง
 // ==============================================================
-app.get('/api/admin/statements', async (req, res) => {
+app.get('/admin/statements', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         const result = await pool.request().query(`
