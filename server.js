@@ -4,9 +4,9 @@ const cors = require('cors');
 require('dotenv').config();
 
 const app = express();
-//const cors = require('cors'); //ถ้ารันในเครื่องต้องปิดตัวนี้
+const cors = require('cors');
 app.use(cors({
-    origin: ['https://run9.app'], // อนุญาตเฉพาะเว็บเรา
+    origin: ['https://run9.app'], // ต้องเป็น URL ของหน้าเว็บคุณเท่านั้น (ไม่มี / ปิดท้าย)
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }));
