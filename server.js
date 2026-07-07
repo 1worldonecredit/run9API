@@ -3,10 +3,7 @@ const sql = require('mssql');
 const cors = require('cors');
 require('dotenv').config();
 
-const express = require('express');
-const cors = require('cors'); // ตรวจสอบว่ามีบรรทัดนี้
 const app = express();
-
 // --- วาง CORS ตรงนี้เลยครับ ---
 app.use(cors({
     origin: 'https://run9.app', // อนุญาตให้หน้าร้านนี้เข้ามาได้
