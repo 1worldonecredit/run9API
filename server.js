@@ -1311,7 +1311,7 @@ app.get('/api/wallet/balance', async (req, res) => {
 // ==============================================================
 // 🌟 API (Admin): 1. รับยอดจาก Manager และกระทบยอดอัตโนมัติ
 // ==============================================================
-app.post('/api/admin/statements', async (req, res) => {
+app.post('/admin/statements', async (req, res) => {
     // รับค่าที่ Manager พิมพ์เข้ามา
     const { systemBankId, amount, transferDate, transferTime, adminName } = req.body;
 
