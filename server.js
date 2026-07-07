@@ -1333,7 +1333,7 @@ app.post('/api/admin/statements', async (req, res) => {
                 .input('tTime', sql.VarChar, transferTime)
                 .input('admin', sql.NVarChar, adminName)
                 .query(`
-                    INSERT INTO SystemBankStatements (SystemBankId, Amount, TransferDate, TransferTime, KeyedByAdmin, Status)
+                    INSERT INTO SystemStatements (SystemBankId, Amount, TransferDate, TransferTime, KeyedByAdmin, Status)
                     OUTPUT INSERTED.Id
                     VALUES (@bankId, @amount, @tDate, @tTime, @admin, 'UNMATCHED')
                 `);
@@ -1372,7 +1372,7 @@ app.post('/api/admin/statements', async (req, res) => {
                 // 3.2 เปลี่ยนสถานะ Statement เป็น MATCHED
                 await transaction.request()
                     .input('stmtId', sql.Int, statementId)
-                    .query(`UPDATE SystemBankStatements SET Status = 'MATCHED' WHERE Id = @stmtId`);
+                    .query(`UPDATE SystemStatements SET Status = 'MATCHED' WHERE Id = @stmtId`);
 
                 // 3.3 💰 เติมเงินเข้ากระเป๋า Wallet ผู้เล่น
                 await transaction.request()
@@ -1417,7 +1417,7 @@ app.get('/api/admin/statements', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         const result = await pool.request().query(`
-            SELECT * FROM SystemBankStatements 
+            SELECT * FROM SystemStatements 
             ORDER BY TransferDate DESC, TransferTime DESC, CreatedAt DESC
         `);
         res.json({ success: true, statements: result.recordset });
