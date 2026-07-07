@@ -739,25 +739,16 @@ app.get('/api/wallet/assets/:userId', async (req, res) => {
     }
 });
 
-a// ==============================================================
-// 🌟 API (Admin): ดึงรายชื่อประเทศทั้งหมด
-// ==============================================================
-app.get('/api/admin/countries', async (req, res) => {
+app.get('/countries', async (req, res) => {
     try {
         let pool = await sql.connect(config);
-        // ดึงข้อมูลทั้งหมดจากตาราง Countries (อ้างอิงจากฐานข้อมูลที่คุณส่งภาพมาให้ดู)
-        const result = await pool.request().query(`
-            SELECT * FROM Countries 
-            ORDER BY Id ASC
-        `);
-        
-        // ส่งข้อมูลกลับไปให้หน้าบ้านในรูปแบบ JSON
-        res.json({ success: true, countries: result.recordset });
+        let result = await pool.request().query("SELECT * FROM Countries ORDER BY Id DESC");
+        res.json(result.recordset);
     } catch (err) {
-        console.error("Database Error:", err);
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
+
 
 // 2. เพิ่มประเทศใหม่
 // 2. เพิ่มประเทศใหม่ (รองรับรูปธงชาติ)
