@@ -1273,7 +1273,7 @@ app.post('/api/wallet/transfer', async (req, res) => {
         await transaction.request()
             .input('uid', sql.Int, fromUserId)
             .input('amt', sql.Decimal, amount)
-            .query(`INSERT INTO Transactions (UserId, Type, Amount, Status) VALUES (@uid, 'TRANSFER', @amt, 'COMPLETED')`);
+            .query(`INSERT INTO dbo.Transactions (UserId, Type, Amount, Status) VALUES (@uid, 'TRANSFER', @amt, 'COMPLETED')`);
 
         await transaction.commit(); // ยืนยันสำเร็จ
         res.json({ success: true, message: "โอนเงินสำเร็จ" });
@@ -1293,7 +1293,7 @@ app.get('/api/wallet/balance', async (req, res) => {
         let pool = await sql.connect(config);
         const result = await pool.request()
             .input('uid', sql.Int, userId)
-            .query(`SELECT Balance, Currency FROM Wallets WHERE UserId = @uid`);
+            .query(`SELECT Balance, Currency FROM dbo.Wallets WHERE UserId = @uid`);
 
         if (result.recordset.length > 0) {
             // ถ้ามีกระเป๋าเงิน ให้ส่งข้อมูลกลับไป
@@ -1333,7 +1333,7 @@ app.post('/api/admin/statements', async (req, res) => {
                 .input('tTime', sql.VarChar, transferTime)
                 .input('admin', sql.NVarChar, adminName)
                 .query(`
-                    INSERT INTO SystemBankStatements (SystemBankId, Amount, TransferDate, TransferTime, KeyedByAdmin, Status)
+                    INSERT INTO dbo.SystemBankStatements (SystemBankId, Amount, TransferDate, TransferTime, KeyedByAdmin, Status)
                     OUTPUT INSERTED.Id
                     VALUES (@bankId, @amount, @tDate, @tTime, @admin, 'UNMATCHED')
                 `);
@@ -1346,7 +1346,7 @@ app.post('/api/admin/statements', async (req, res) => {
                 .input('amount', sql.Decimal(18,2), amount)
                 .input('tDate', sql.Date, transferDate)
                 .query(`
-                    SELECT TOP 1 * FROM Transactions 
+                    SELECT TOP 1 * FROM dbo.Transactions 
                     WHERE TransactionType = 'DEPOSIT' 
                     AND Status = 'PENDING'
                     AND SystemBankId = @bankId 
@@ -1367,23 +1367,23 @@ app.post('/api/admin/statements', async (req, res) => {
                 await transaction.request()
                     .input('txId', sql.Int, txId)
                     .input('admin', sql.VarChar, adminName)
-                    .query(`UPDATE Transactions SET Status = 'COMPLETED', ApprovedByAdmin = @admin WHERE Id = @txId`);
+                    .query(`UPDATE dbo.Transactions SET Status = 'COMPLETED', ApprovedByAdmin = @admin WHERE Id = @txId`);
 
                 // 3.2 เปลี่ยนสถานะ Statement เป็น MATCHED
                 await transaction.request()
                     .input('stmtId', sql.Int, statementId)
-                    .query(`UPDATE SystemBankStatements SET Status = 'MATCHED' WHERE Id = @stmtId`);
+                    .query(`UPDATE dbo.SystemBankStatements SET Status = 'MATCHED' WHERE Id = @stmtId`);
 
                 // 3.3 💰 เติมเงินเข้ากระเป๋า Wallet ผู้เล่น
                 await transaction.request()
                     .input('uid', sql.Int, userId)
                     .input('amt', sql.Decimal(18,4), amount)
-                    .query(`UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @amt WHERE UserId = @uid`);
+                    .query(`UPDATE dbo.Wallets SET Balance = ISNULL(Balance, 0) + @amt WHERE UserId = @uid`);
 
                 // 3.4 แจ้งเตือนผู้เล่น
                 const userRes = await transaction.request()
                     .input('uid', sql.Int, userId)
-                    .query(`SELECT Username FROM UsersRegister WHERE Id = @uid`);
+                    .query(`SELECT Username FROM dbo.UsersRegister WHERE Id = @uid`);
                 
                 if(userRes.recordset.length > 0) {
                     const username = userRes.recordset[0].Username;
@@ -1391,7 +1391,7 @@ app.post('/api/admin/statements', async (req, res) => {
                         .input('user', sql.VarChar, username)
                         .input('title', sql.NVarChar, 'กระทบยอดอัตโนมัติสำเร็จ')
                         .input('msg', sql.NVarChar, `ยอดเงิน ${amount} บาท เข้า Wallet เรียบร้อยแล้ว`)
-                        .query(`INSERT INTO Notifications (Username, Title, Message) VALUES (@user, @title, @msg)`);
+                        .query(`INSERT INTO dbo.Notifications (Username, Title, Message) VALUES (@user, @title, @msg)`);
                 }
 
                 matchResult = "✅ บันทึกและจับคู่สำเร็จ! ระบบเติมเงินให้ผู้เล่นอัตโนมัติแล้ว";
@@ -1417,7 +1417,7 @@ app.get('/api/admin/statements', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         const result = await pool.request().query(`
-            SELECT * FROM SystemBankStatements 
+            SELECT * FROM dbo.SystemBankStatements 
             ORDER BY TransferDate DESC, TransferTime DESC, CreatedAt DESC
         `);
         res.json({ success: true, statements: result.recordset });
