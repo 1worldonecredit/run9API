@@ -1190,7 +1190,7 @@ app.post('/api/admin/login', async (req, res) => {
         const result = await pool.request()
             .input('u', sql.VarChar, username)
             .input('p', sql.VarChar, password)
-            .query(`SELECT EmployeeCode, Username, FirstName, LastName, Role, Permissions 
+            .query(`SELECT EmployeeCode, Username, FirstName, LastName, Role
                     FROM Employees 
                     WHERE Username = @u AND Password = @p AND Status = 'Active'`);
 
