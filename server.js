@@ -726,7 +726,7 @@ app.post('/api/game/trigger-new-day', async (req, res) => {
 
 
 // ==============================================================
-// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (อัปเดตสำหรับระบบเงินปันผล)
+// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (แก้ไขปัญหา Statement ไม่แสดง)
 // ==============================================================
 app.get('/api/wallet/assets/:userId', async (req, res) => {
     try {
@@ -737,21 +737,23 @@ app.get('/api/wallet/assets/:userId', async (req, res) => {
         
         let pool = await sql.connect(config);
         
-        // 🌟 1. ดึงข้อมูลกระเป๋า (เพิ่ม SELECT Currency, LastUpdated)
+        // 1. ดึงยอดเงิน
         const walletRes = await pool.request()
             .input('uid', sql.Int, userId)
             .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @uid`);
             
-        // กำหนดค่าเริ่มต้นถ้าไม่พบ
         const walletData = walletRes.recordset.length > 0 ? walletRes.recordset[0] : { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
 
-        // 2. สร้างคำสั่ง SQL สำหรับดึงประวัติ (เหมือนเดิม ปลอดภัย)
+        // 2. ดึงประวัติจากตาราง Transactions (นี่คือตารางที่ถูกต้องสำหรับลูกค้า)
+        // 🌟 ปรับ SQL ให้รองรับเดือนแบบยืดหยุ่น และถ้าไม่ได้ส่งเดือนมาก็ดึง 20 รายการล่าสุด
         let query = `SELECT * FROM Transactions WHERE UserId = @uid`;
         let countQuery = `SELECT COUNT(*) as Total FROM Transactions WHERE UserId = @uid`;
         
-        if (month) {
-            query += ` AND FORMAT(CreatedAt, 'yyyy-MM') = @month`;
-            countQuery += ` AND FORMAT(CreatedAt, 'yyyy-MM') = @month`;
+        // กรองตามเดือนเฉพาะเมื่อมีการส่ง month มา และไม่ใช่ค่าว่าง
+        if (month && month.trim() !== '') {
+            // สำคัญ: SQL Server บางเวอร์ชันอาจไม่รองรับ FORMAT() เราจะใช้ YEAR() และ MONTH() แทนให้ชัวร์
+            query += ` AND YEAR(CreatedAt) = @year AND MONTH(CreatedAt) = @mth`;
+            countQuery += ` AND YEAR(CreatedAt) = @year AND MONTH(CreatedAt) = @mth`;
         }
         
         query += ` ORDER BY CreatedAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`;
@@ -759,21 +761,24 @@ app.get('/api/wallet/assets/:userId', async (req, res) => {
         const reqTx = pool.request().input('uid', sql.Int, userId).input('offset', sql.Int, offset).input('limit', sql.Int, limit);
         const reqCount = pool.request().input('uid', sql.Int, userId);
         
-        if (month) {
-            reqTx.input('month', sql.VarChar, month);
-            reqCount.input('month', sql.VarChar, month);
+        if (month && month.trim() !== '') {
+            // แยกค่า "2026-07" ออกเป็น year: 2026, mth: 7
+            const [year, mth] = month.split('-');
+            reqTx.input('year', sql.Int, parseInt(year));
+            reqTx.input('mth', sql.Int, parseInt(mth));
+            reqCount.input('year', sql.Int, parseInt(year));
+            reqCount.input('mth', sql.Int, parseInt(mth));
         }
         
         const txRes = await reqTx.query(query);
         const countRes = await reqCount.query(countQuery);
         const total = countRes.recordset[0].Total;
 
-        // 🌟 3. ส่งข้อมูลกลับไปครบถ้วน (รวมถึงค่าใหม่)
         res.json({
             success: true,
             balance: walletData.Balance,
-            currency: walletData.Currency,      // ส่งค่าสกุลเงินไปให้ Frontend
-            lastUpdated: walletData.LastUpdated, // ส่งเวลาล่าสุดให้ Frontend คำนวณเงินปันผล
+            currency: walletData.Currency,      
+            lastUpdated: walletData.LastUpdated,
             transactions: txRes.recordset,
             totalPages: Math.ceil(total / limit) || 1,
             currentPage: parseInt(page)
