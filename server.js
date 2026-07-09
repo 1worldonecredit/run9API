@@ -435,7 +435,7 @@ app.get('/api/admin/transactions', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API (Admin): 2. แอดมินกดยืนยัน (Approve) กระทบยอดสำเร็จ
+// 🌟 API (Admin): 2. แอดมินกดยืนยัน (Approve) และคิดเงินปันผลอัตโนมัติ!
 // ==============================================================
 app.post('/api/admin/transactions/approve', async (req, res) => {
     const { transactionId, userId, amount, username } = req.body;
@@ -446,13 +446,51 @@ app.post('/api/admin/transactions/approve', async (req, res) => {
         await transaction.begin();
 
         try {
-            // 1. เติมเงินเข้ากระเป๋าผู้เล่นจริงๆ ตรงนี้!
+            // 🌟 1. กระบวนการคำนวณเงินปันผล + อัปเดตเงิน + รีเซ็ตเวลา (ทำรวดเดียวใน SQL เพื่อป้องกันข้อมูลชนกัน)
+            const processDividendAndBalance = `
+                DECLARE @CurrentBalance DECIMAL(18,4);
+                DECLARE @LastUpdated DATETIME;
+                DECLARE @Now DATETIME = GETDATE();
+                DECLARE @Dividend DECIMAL(18,4) = 0;
+                DECLARE @DaysPassed FLOAT = 0;
+                DECLARE @Rate FLOAT = 0.10; -- อัตราเงินปันผล 10% ต่อปี
+
+                -- ล็อกแถวและอ่านค่ายอดเงิน + เวลาอัปเดตล่าสุด
+                SELECT @CurrentBalance = ISNULL(Balance, 0), @LastUpdated = LastUpdated 
+                FROM Wallets WITH (UPDLOCK) 
+                WHERE UserId = @uid;
+
+                -- ก. คำนวณเงินปันผล (ถ้ายอดเงิน > 0 และเคยมีการอัปเดตเวลา)
+                IF @CurrentBalance > 0 AND @LastUpdated IS NOT NULL
+                BEGIN
+                    SET @DaysPassed = DATEDIFF(SECOND, @LastUpdated, @Now) / 86400.0;
+                    SET @Dividend = @CurrentBalance * @Rate * (@DaysPassed / 365.0);
+                END
+
+                -- ข. ถ้ามีเงินปันผล ให้บวกเข้ากระเป๋า และสร้างบิลประวัติ 'DIVIDEND'
+                IF @Dividend > 0.000001
+                BEGIN
+                    SET @CurrentBalance = @CurrentBalance + @Dividend;
+                    
+                    INSERT INTO Transactions (UserId, TransactionType, Amount, Status, TransferDate, TransferTime)
+                    VALUES (@uid, 'DIVIDEND', @Dividend, 'COMPLETED', CONVERT(VARCHAR(10), @Now, 120), CONVERT(VARCHAR(5), @Now, 108));
+                END
+
+                -- ค. จัดการยอดที่แอดมินอนุมัติบวกเข้าไป
+                SET @CurrentBalance = @CurrentBalance + @amt;
+
+                -- ง. อัปเดตกระเป๋ากลับไป พร้อมเซ็ต LastUpdated เป็นเวลาปัจจุบันเพื่อเริ่มนับปันผลรอบใหม่!
+                UPDATE Wallets 
+                SET Balance = @CurrentBalance, LastUpdated = @Now 
+                WHERE UserId = @uid;
+            `;
+
             await transaction.request()
                 .input('uid', sql.Int, userId)
                 .input('amt', sql.Decimal(18,4), amount)
-                .query(`UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @amt WHERE UserId = @uid`);
+                .query(processDividendAndBalance);
 
-            // 2. อัปเดตสถานะบิลเป็น 'COMPLETED'
+            // 2. อัปเดตสถานะบิลหลักที่แอดมินกดอนุมัติเป็น 'COMPLETED'
             await transaction.request()
                 .input('txId', sql.Int, transactionId)
                 .query(`UPDATE Transactions SET Status = 'COMPLETED' WHERE Id = @txId`);
@@ -465,12 +503,14 @@ app.post('/api/admin/transactions/approve', async (req, res) => {
                 .query(`INSERT INTO Notifications (Username, Title, Message) VALUES (@user, @title, @msg)`);
 
             await transaction.commit();
-            res.json({ success: true, message: "กระทบยอดและเติมเงินสำเร็จ!" });
+            res.json({ success: true, message: "กระทบยอด, จ่ายปันผล และเติมเงินสำเร็จ!" });
         } catch (err) {
             await transaction.rollback();
             throw err;
         }
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 // ==============================================================
@@ -686,24 +726,26 @@ app.post('/api/game/trigger-new-day', async (req, res) => {
 
 
 // ==============================================================
-// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (ยอดเงินคงเหลือ + Statement 20 รายการ/หน้า) 44444
+// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (อัปเดตสำหรับระบบเงินปันผล)
 // ==============================================================
 app.get('/api/wallet/assets/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
-        const { month, page = 1 } = req.query; // รับค่าเดือน เช่น '2026-06' และ หน้าปัจจุบัน
-        const limit = 20; // 🌟 กำหนดให้แสดงหน้าละ 20 รายการ
+        const { month, page = 1 } = req.query;
+        const limit = 20; 
         const offset = (page - 1) * limit;
         
         let pool = await sql.connect(config);
         
-        // 1. ดึงยอดเงินคงเหลือปัจจุบัน
-        const balanceRes = await pool.request()
+        // 🌟 1. ดึงข้อมูลกระเป๋า (เพิ่ม SELECT Currency, LastUpdated)
+        const walletRes = await pool.request()
             .input('uid', sql.Int, userId)
-            .query(`SELECT Balance FROM Wallets WHERE UserId = @uid`);
-        const balance = balanceRes.recordset.length > 0 ? balanceRes.recordset[0].Balance : 0;
+            .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @uid`);
+            
+        // กำหนดค่าเริ่มต้นถ้าไม่พบ
+        const walletData = walletRes.recordset.length > 0 ? walletRes.recordset[0] : { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
 
-        // 2. สร้างคำสั่ง SQL สำหรับดึงประวัติ (กรองตามเดือน ถ้ามีการเลือก)
+        // 2. สร้างคำสั่ง SQL สำหรับดึงประวัติ (เหมือนเดิม ปลอดภัย)
         let query = `SELECT * FROM Transactions WHERE UserId = @uid`;
         let countQuery = `SELECT COUNT(*) as Total FROM Transactions WHERE UserId = @uid`;
         
@@ -712,7 +754,6 @@ app.get('/api/wallet/assets/:userId', async (req, res) => {
             countQuery += ` AND FORMAT(CreatedAt, 'yyyy-MM') = @month`;
         }
         
-        // เรียงจากใหม่ไปเก่า และดึงข้อมูลตามหน้า (Pagination)
         query += ` ORDER BY CreatedAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`;
         
         const reqTx = pool.request().input('uid', sql.Int, userId).input('offset', sql.Int, offset).input('limit', sql.Int, limit);
@@ -727,14 +768,18 @@ app.get('/api/wallet/assets/:userId', async (req, res) => {
         const countRes = await reqCount.query(countQuery);
         const total = countRes.recordset[0].Total;
 
+        // 🌟 3. ส่งข้อมูลกลับไปครบถ้วน (รวมถึงค่าใหม่)
         res.json({
             success: true,
-            balance: balance,
+            balance: walletData.Balance,
+            currency: walletData.Currency,      // ส่งค่าสกุลเงินไปให้ Frontend
+            lastUpdated: walletData.LastUpdated, // ส่งเวลาล่าสุดให้ Frontend คำนวณเงินปันผล
             transactions: txRes.recordset,
             totalPages: Math.ceil(total / limit) || 1,
             currentPage: parseInt(page)
         });
     } catch (err) {
+        console.error("Assets API Error:", err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -925,6 +970,51 @@ app.post('/login', async (req, res) => {
             console.log("หาข้อมูลไม่เจอใน Database หรือรหัสผิด"); 
             res.status(401).send('ข้อมูลผิดพลาด');
         }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+app.get('/api/wallet/assets/:userId', async (req, res) => {
+    const userId = req.params.userId;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20; // 🌟 รับ Limit 20 รายการตามที่คุณต้องการ
+    const offset = (page - 1) * limit;
+
+    try {
+        let pool = await sql.connect(config);
+        
+        // 🌟 1. ดึงกระเป๋าเงิน (อย่าลืม SELECT Currency และ LastUpdated)
+        const walletRes = await pool.request()
+            .input('userId', sql.Int, userId)
+            .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @userId`);
+            
+        if (walletRes.recordset.length === 0) return res.json({ success: false, message: "Wallet not found" });
+        const wallet = walletRes.recordset[0];
+
+        // 🌟 2. ดึง Statement (เรียงล่าสุดลงมาจำกัด 20 รายการ)
+        // อย่าลืมดึง 'DIVIDEND' มาแสดงด้วย
+        const txRes = await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('offset', sql.Int, offset)
+            .input('limit', sql.Int, limit)
+            .query(`
+                SELECT Id, Amount, TransactionType, Status, CreatedAt, ReferenceId 
+                FROM WalletTransactions 
+                WHERE UserId = @userId 
+                ORDER BY CreatedAt DESC 
+                OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+            `);
+
+        res.json({ 
+            success: true, 
+            balance: wallet.Balance, 
+            currency: wallet.Currency,      // 🌟 ส่งค่า Currency กลับไป Frontend
+            lastUpdated: wallet.LastUpdated, // 🌟 ส่ง LastUpdated กลับไปให้ Frontend คำนวณตัวเลขวิ่ง
+            transactions: txRes.recordset,
+            totalPages: 1 // (ปรับ Query นับจำนวนหน้าได้ตามต้องการครับ)
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
