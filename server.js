@@ -1714,9 +1714,8 @@ app.post('/api/tickets/claim-daily', async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
-
 // ==============================================================
-// 🌟 3. API ระบบกดเล่นเกมสอยดาว (อัปเกรดความแม่นยำการตัดสิทธิ์)
+// 🌟 3. API ระบบกดเล่นเกมสอยดาว (เพิ่มการบันทึก Statement)
 // ==============================================================
 app.post('/api/game/play', async (req, res) => {
     const { username, gameType } = req.body;
@@ -1734,24 +1733,25 @@ app.post('/api/game/play', async (req, res) => {
 
             if (settingRes.recordset.length === 0) throw new Error("ไม่พบการตั้งค่าเกมนี้ในระบบ");
             
-            // บังคับให้เป็น Number เพื่อป้องกันบั๊ก Data Type จาก SQL
             const cost = Number(settingRes.recordset[0].Cost); 
             const potentialReward = Number(settingRes.recordset[0].RewardAmount);
 
             const userRes = await transaction.request()
                 .input('user', sql.VarChar, username)
-                .query(`SELECT u.Id, ISNULL(w.Balance, 0) as Balance FROM UsersRegister u LEFT JOIN Wallets w ON u.Id = w.UserId WHERE u.Username = @user`);
+                .query(`SELECT u.Id, ISNULL(w.Balance, 0) as Balance, w.Currency FROM UsersRegister u LEFT JOIN Wallets w ON u.Id = w.UserId WHERE u.Username = @user`);
 
             if (userRes.recordset.length === 0) throw new Error("ไม่พบผู้ใช้งาน");
             const userId = userRes.recordset[0].Id;
             const balance = Number(userRes.recordset[0].Balance);
+            const userCurrency = userRes.recordset[0].Currency || 'THB'; // ดึงสกุลเงินของผู้ใช้
 
             let isFreeTicket = 0;
             const bkkDate = new Date().toLocaleString('en-CA', { timeZone: 'Asia/Bangkok' }).split(',')[0];
             const bkkTime = new Date().toLocaleString('en-GB', { timeZone: 'Asia/Bangkok' }).split(', ')[1];
 
-            // 🌟 ตรวจสอบและหักจำนวนสิทธิ์ (แก้บั๊กตัดสิทธิ์ 100%)
+            // 🌟 ตรวจสอบและหักจำนวนสิทธิ์
             if (cost === 0) {
+                // ... (Logic การหักตั๋วฟรีของคุณเหมือนเดิม) ...
                 const ticketRes = await transaction.request()
                     .input('uid', sql.Int, userId)
                     .query(`SELECT FreeTickets FROM UserGameTickets WHERE UserId = @uid`);
@@ -1760,7 +1760,6 @@ app.post('/api/game/play', async (req, res) => {
                     throw new Error("คุณไม่มีสิทธิ์ฟรี กรุณากดปุ่ม 'รับสิทธิ์ประจำวัน' ก่อนเล่น!");
                 }
 
-                // หักตั๋วออก 1 ใบอย่างแน่นอน
                 await transaction.request()
                     .input('uid', sql.Int, userId)
                     .query(`UPDATE UserGameTickets SET FreeTickets = FreeTickets - 1, LastUpdated = GETDATE() WHERE UserId = @uid`);
@@ -1768,11 +1767,23 @@ app.post('/api/game/play', async (req, res) => {
                 isFreeTicket = 1;
             } else {
                 if (balance < cost) throw new Error(`ยอดเงินไม่พอ (ต้องการ ${cost} ฿)`);
-                // หักเงิน
+                
+                // 1. หักเงินในกระเป๋า
                 await transaction.request()
                     .input('uid', sql.Int, userId)
                     .input('cost', sql.Decimal(18,2), cost)
                     .query(`UPDATE Wallets SET Balance = Balance - @cost WHERE UserId = @uid`);
+                
+                // 🌟 2. บันทึก Statement ขาออก (ค่าเล่นเกม) ลงในตาราง Transactions
+                await transaction.request()
+                    .input('uid', sql.Int, userId)
+                    .input('type', sql.VarChar, 'GAME_PLAY') // ระบุประเภทชัดเจนว่าเสียเงินค่าเล่น
+                    .input('amt', sql.Decimal(18,2), cost)
+                    .input('currency', sql.VarChar, userCurrency) // ส่งสกุลเงินไปด้วย
+                    .query(`
+                        INSERT INTO Transactions (UserId, TransactionType, Amount, Status, Currency, CreatedAt) 
+                        VALUES (@uid, @type, @amt, 'COMPLETED', @currency, GETDATE())
+                    `);
             }
 
             // สุ่มผลรางวัล 30%
@@ -1784,14 +1795,26 @@ app.post('/api/game/play', async (req, res) => {
                 resultStatus = 'WIN';
                 finalReward = potentialReward;
                 
-                // อัปเดตเงินรางวัลเข้ากระเป๋า (ซึ่งจะไปกระตุ้น SQL Trigger ให้บันทึก Statement อัตโนมัติ)
+                // อัปเดตเงินรางวัลเข้ากระเป๋า
                 await transaction.request()
                     .input('uid', sql.Int, userId)
                     .input('reward', sql.Decimal(18,2), finalReward)
                     .query(`UPDATE Wallets SET Balance = ISNULL(Balance,0) + @reward WHERE UserId = @uid`);
+
+                // 🌟 บันทึก Statement ขาเข้า (ถูกรางวัล) ลงในตาราง Transactions
+                await transaction.request()
+                    .input('uid', sql.Int, userId)
+                    .input('type', sql.VarChar, 'GAME_PRIZE') // เปลี่ยนชื่อเป็น GAME_PRIZE
+                    .input('reward', sql.Decimal(18,2), finalReward)
+                    .input('currency', sql.VarChar, userCurrency) // ส่งสกุลเงินไปด้วย
+                    .input('ref', sql.VarChar, `WIN_${gameType}`) // ใส่ Ref id ว่าชนะจากเกมไหน
+                    .query(`
+                        INSERT INTO Transactions (UserId, TransactionType, Amount, Status, Currency, ReferenceId, CreatedAt) 
+                        VALUES (@uid, @type, @reward, 'COMPLETED', @currency, @ref, GETDATE())
+                    `);
             }
 
-            // บันทึก Statement การเล่นในตารางประวัติเกม
+            // บันทึก Log การเล่นลง UserGameHistory (เหมือนเดิม)
             await transaction.request()
                 .input('uid', sql.Int, userId)
                 .input('gameType', sql.VarChar, gameType)
