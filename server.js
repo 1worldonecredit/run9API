@@ -723,10 +723,8 @@ app.post('/api/game/trigger-new-day', async (req, res) => {
     }
 });
 
-
-
 // ==============================================================
-// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (แก้ไขปัญหา Statement ไม่แสดง)
+// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (แก้ปัญหา Statement ใหม่ไม่ขึ้น)
 // ==============================================================
 app.get('/api/wallet/assets/:userId', async (req, res) => {
     try {
@@ -744,42 +742,57 @@ app.get('/api/wallet/assets/:userId', async (req, res) => {
             
         const walletData = walletRes.recordset.length > 0 ? walletRes.recordset[0] : { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
 
-        // 2. ดึงประวัติจากตาราง Transactions (นี่คือตารางที่ถูกต้องสำหรับลูกค้า)
-        // 🌟 ปรับ SQL ให้รองรับเดือนแบบยืดหยุ่น และถ้าไม่ได้ส่งเดือนมาก็ดึง 20 รายการล่าสุด
-        let query = `SELECT * FROM Transactions WHERE UserId = @uid`;
-        let countQuery = `SELECT COUNT(*) as Total FROM Transactions WHERE UserId = @uid`;
+        // 🌟 2. ปรับ Query ดึง Statement ให้ฉลาดขึ้น
+        // ใช้ COALESCE เพื่อหาว่าช่องวันที่ช่องไหนมีข้อมูลให้เอาช่องนั้นมาใช้เรียงลำดับและค้นหา
+        let query = `
+            SELECT *, 
+                   COALESCE(CreatedAt, TransactionDate, TransferDate) AS ActualDate 
+            FROM Transactions 
+            WHERE UserId = @uid
+        `;
         
-        // กรองตามเดือนเฉพาะเมื่อมีการส่ง month มา และไม่ใช่ค่าว่าง
+        let countQuery = `
+            SELECT COUNT(*) as Total 
+            FROM Transactions 
+            WHERE UserId = @uid
+        `;
+        
         if (month && month.trim() !== '') {
-            // สำคัญ: SQL Server บางเวอร์ชันอาจไม่รองรับ FORMAT() เราจะใช้ YEAR() และ MONTH() แทนให้ชัวร์
-            query += ` AND YEAR(CreatedAt) = @year AND MONTH(CreatedAt) = @mth`;
-            countQuery += ` AND YEAR(CreatedAt) = @year AND MONTH(CreatedAt) = @mth`;
+            // ใช้ค่า ActualDate ที่เราสร้างขึ้นจำลองมาเช็กเดือน
+            query += ` AND FORMAT(COALESCE(CreatedAt, TransactionDate, TransferDate), 'yyyy-MM') = @month`;
+            countQuery += ` AND FORMAT(COALESCE(CreatedAt, TransactionDate, TransferDate), 'yyyy-MM') = @month`;
         }
         
-        query += ` ORDER BY CreatedAt DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`;
+        // เรียงลำดับจาก ActualDate แทน CreatedAt
+        query += ` ORDER BY ActualDate DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`;
         
         const reqTx = pool.request().input('uid', sql.Int, userId).input('offset', sql.Int, offset).input('limit', sql.Int, limit);
         const reqCount = pool.request().input('uid', sql.Int, userId);
         
         if (month && month.trim() !== '') {
-            // แยกค่า "2026-07" ออกเป็น year: 2026, mth: 7
-            const [year, mth] = month.split('-');
-            reqTx.input('year', sql.Int, parseInt(year));
-            reqTx.input('mth', sql.Int, parseInt(mth));
-            reqCount.input('year', sql.Int, parseInt(year));
-            reqCount.input('mth', sql.Int, parseInt(mth));
+            reqTx.input('month', sql.VarChar, month);
+            reqCount.input('month', sql.VarChar, month);
         }
         
         const txRes = await reqTx.query(query);
         const countRes = await reqCount.query(countQuery);
         const total = countRes.recordset[0].Total;
 
+        // 🌟 3. ปรับแก้ข้อมูลก่อนส่งไป Frontend ให้แสดงวันที่ถูกต้อง
+        const formattedTransactions = txRes.recordset.map(tx => {
+            return {
+                ...tx,
+                // บังคับให้ Frontend ใช้ ActualDate เป็นวันที่แสดงผลหลัก
+                CreatedAt: tx.ActualDate 
+            };
+        });
+
         res.json({
             success: true,
             balance: walletData.Balance,
             currency: walletData.Currency,      
             lastUpdated: walletData.LastUpdated,
-            transactions: txRes.recordset,
+            transactions: formattedTransactions,
             totalPages: Math.ceil(total / limit) || 1,
             currentPage: parseInt(page)
         });
