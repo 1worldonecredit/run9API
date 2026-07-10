@@ -540,19 +540,7 @@ app.post('/api/admin/transactions/approve', async (req, res) => {
     }
 });
 
-// ==============================================================
-// 🌟 API (User): ซ่อนการแจ้งเตือน (Soft Delete = ปรับ IsHidden)
-// ==============================================================
-app.put('/api/notifications/:id/hide', async (req, res) => {
-    try {
-        let pool = await sql.connect(config);
-        // ไม่ลบข้อมูลทิ้งจริง แต่ปรับ IsHidden = 1 แทน
-        await pool.request()
-            .input('id', sql.Int, req.params.id)
-            .query("UPDATE Notifications SET IsHidden = 1 WHERE Id = @id");
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
+
 
 // ==============================================================
 // 🌟 API (Admin): ดึงสถิติภาพรวมสำหรับหน้า Dashboard
@@ -592,7 +580,7 @@ app.get('/api/admin/dashboard-stats', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API: ดึงรายการแจ้งเตือนที่ยังไม่ถูกซ่อน (IsHidden = 0)
+// 🌟 API (User): ดึงการแจ้งเตือนของฉัน (เฉพาะที่ยังไม่ถูกซ่อน)
 // ==============================================================
 app.get('/api/notifications/:username', async (req, res) => {
     try {
@@ -601,21 +589,27 @@ app.get('/api/notifications/:username', async (req, res) => {
             .input('user', sql.VarChar, req.params.username)
             .query("SELECT * FROM Notifications WHERE Username = @user AND IsHidden = 0 ORDER BY CreatedAt DESC");
         res.json({ success: true, notifications: result.recordset });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 // ==============================================================
-// 🌟 API: ซ่อนการแจ้งเตือน (Soft Delete)
+// 🌟 API (User): ซ่อนการแจ้งเตือน (Soft Delete = เปลี่ยน IsHidden เป็น 1)
 // ==============================================================
 app.put('/api/notifications/:id/hide', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         await pool.request()
             .input('id', sql.Int, req.params.id)
-            .query("UPDATE Notifications SET IsHidden = 1 WHERE Id = @id"); // เปลี่ยนสถานะแทนการลบทิ้ง
-        res.json({ success: true, message: "ลบการแจ้งเตือนแล้ว" });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+            .query("UPDATE Notifications SET IsHidden = 1 WHERE Id = @id");
+        res.json({ success: true, message: "ซ่อนการแจ้งเตือนสำเร็จ" });
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
+
+
 
 // ==============================================================
 // 🌟 4. API: เล่นเกมสอยดาว (จ่ายเงินตามยอดสะสมจริง)
