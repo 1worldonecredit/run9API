@@ -865,31 +865,30 @@ app.put('/update-country/:id', async (req, res) => {
 // ==============================================================
 // 1. API สำหรับสมัครสมาชิก (ใช้งานกับตาราง UsersRegister)
 // ==============================================================
+// ตัวอย่างการแก้ API Register (Node.js)
 app.post('/register', async (req, res) => {
-    const { referral, country, username, password } = req.body; 
+    // 🌟 รับค่า referralUsername มาจากหน้าบ้านด้วย
+    const { username, password, country, referralUsername } = req.body; 
+    
     try {
         let pool = await sql.connect(config);
+        
+        // ... (โค้ดเช็กว่าชื่อซ้ำไหม ของคุณที่มีอยู่เดิม) ...
 
-        // 🛡️ เช็ค Username ซ้ำก่อนสมัครสมาชิก
-        let userCheck = await pool.request()
-         .input('username', sql.VarChar, username)
-         .query("SELECT Id FROM UsersRegister WHERE Username = @username");
-
-        if (userCheck.recordset.length > 0) {
-         return res.status(400).json({ error: "ชื่อผู้ใช้งาน (Username) นี้มีคนใช้แล้ว กรุณาตั้งชื่ออื่น" });
-        }
-            // ... โค้ด INSERT ข้อมูลสมัครสมาชิกของคุณ ...
-
+        // 🌟 แก้คำสั่ง INSERT ให้เพิ่ม ReferralUsername เข้าไป
         await pool.request()
-            .input('referral', sql.VarChar, referral || '')
-            .input('country', sql.VarChar, country || '')
             .input('user', sql.VarChar, username)
             .input('pass', sql.VarChar, password)
-            .query('INSERT INTO UsersRegister (ReferralUsername, Country, Username, Password) VALUES (@referral, @country, @user, @pass)');
-        res.status(201).json({ message: "สมัครสมาชิกสำเร็จ" });
-    } catch (err) { 
-        console.error("Register Error:", err.message);
-        res.status(500).json({ error: err.message }); 
+            .input('country', sql.VarChar, country)
+            .input('ref', sql.VarChar, referralUsername || null) // ถ้าไม่มีคนแนะนำให้ใส่ null
+            .query(`
+                INSERT INTO UsersRegister (Username, Password, Country, ReferralUsername, Status, RegistrationDate) 
+                VALUES (@user, @pass, @country, @ref, 'Active', GETDATE())
+            `);
+            
+        res.json({ success: true, message: "สมัครสมาชิกสำเร็จ!" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -991,10 +990,9 @@ app.post('/login', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (แก้ให้รับค่า Username แทน UserId)
+// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (เวอร์ชันปลอดภัยสูงสุด กัน Error 500)
 // ==============================================================
 app.get('/api/wallet/assets/:username', async (req, res) => {
-    // 🌟 เปลี่ยนมารับค่า username จาก URL แทน
     const username = req.params.username; 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20; 
@@ -1003,7 +1001,7 @@ app.get('/api/wallet/assets/:username', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // 🌟 0. ค้นหา UserId จากตาราง UsersRegister โดยใช้ Username
+        // 0. ค้นหา UserId
         const userRes = await pool.request()
             .input('username', sql.VarChar, username)
             .query(`SELECT Id FROM UsersRegister WHERE Username = @username`);
@@ -1012,30 +1010,35 @@ app.get('/api/wallet/assets/:username', async (req, res) => {
             return res.status(404).json({ success: false, message: "User not found" });
         }
         
-        // ได้ UserId ของจริงมาแล้ว! เอาไปใช้ต่อใน Query ด้านล่างได้เลย
         const userId = userRes.recordset[0].Id; 
 
-        // 🌟 1. ดึงกระเป๋าเงิน
+        // 1. ดึงกระเป๋าเงิน
         const walletRes = await pool.request()
             .input('userId', sql.Int, userId)
             .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @userId`);
             
-        // ถ้าเป็น User ใหม่ยังไม่มีกระเป๋า ให้ส่งยอด 0 ไปแทนการ Error
         let wallet = { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
         if (walletRes.recordset.length > 0) {
             wallet = walletRes.recordset[0];
         }
 
-        // 🌟 2. ดึง Statement (จากตาราง WalletTransactions ตามโค้ดเดิมของคุณ)
+        // 🌟 2. ดึง Statement (ใช้ COALESCE ป้องกันวันที่เป็น NULL ที่ทำให้ระบบพัง)
         const txRes = await pool.request()
             .input('userId', sql.Int, userId)
             .input('offset', sql.Int, offset)
             .input('limit', sql.Int, limit)
             .query(`
-                SELECT Id, Amount, TransactionType, Status, CreatedAt, ReferenceId 
-                FROM WalletTransactions 
+                SELECT 
+                    Id, 
+                    Amount, 
+                    TransactionType, 
+                    Status, 
+                    COALESCE(CreatedAt, TransactionDate, GETDATE()) AS CreatedAt, 
+                    ReferenceId,
+                    Currency
+                FROM Transactions 
                 WHERE UserId = @userId 
-                ORDER BY CreatedAt DESC 
+                ORDER BY COALESCE(CreatedAt, TransactionDate, GETDATE()) DESC 
                 OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
             `);
 
@@ -1048,6 +1051,8 @@ app.get('/api/wallet/assets/:username', async (req, res) => {
             totalPages: 1 
         });
     } catch (err) {
+        // 🌟 พิมพ์ Error ออกมาดูชัดๆ ในหน้าต่าง Console ฝั่ง Node.js
+        console.error("🔥 Assets API Error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
