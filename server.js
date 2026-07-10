@@ -753,78 +753,64 @@ app.post('/api/game/trigger-new-day', async (req, res) => {
 // ==============================================================
 // 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (แก้ปัญหา Statement ใหม่ไม่ขึ้น)
 // ==============================================================
-app.get('/api/wallet/assets/:userId', async (req, res) => {
+// ==============================================================
+// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (รับค่า username แทน userId)
+// ==============================================================
+app.get('/api/wallet/assets/:username', async (req, res) => {
+    const username = req.params.username; 
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20; 
+    const offset = (page - 1) * limit;
+
     try {
-        const { userId } = req.params;
-        const { month, page = 1 } = req.query;
-        const limit = 20; 
-        const offset = (page - 1) * limit;
-        
         let pool = await sql.connect(config);
         
-        // 1. ดึงยอดเงิน
-        const walletRes = await pool.request()
-            .input('uid', sql.Int, userId)
-            .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @uid`);
+        // 0. ค้นหา UserId ด้วย Username ที่ส่งมา
+        const userRes = await pool.request()
+            .input('username', sql.VarChar, username)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @username`);
             
-        const walletData = walletRes.recordset.length > 0 ? walletRes.recordset[0] : { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
+        if (userRes.recordset.length === 0) return res.status(404).json({ success: false, message: "User not found" });
+        
+        const userId = userRes.recordset[0].Id; 
 
-        // 🌟 2. ปรับ Query ดึง Statement ให้ฉลาดขึ้น
-        // ใช้ COALESCE เพื่อหาว่าช่องวันที่ช่องไหนมีข้อมูลให้เอาช่องนั้นมาใช้เรียงลำดับและค้นหา
-        let query = `
-            SELECT *, 
-                   COALESCE(CreatedAt, TransactionDate, TransferDate) AS ActualDate 
-            FROM Transactions 
-            WHERE UserId = @uid
-        `;
-        
-        let countQuery = `
-            SELECT COUNT(*) as Total 
-            FROM Transactions 
-            WHERE UserId = @uid
-        `;
-        
-        if (month && month.trim() !== '') {
-            // ใช้ค่า ActualDate ที่เราสร้างขึ้นจำลองมาเช็กเดือน
-            query += ` AND FORMAT(COALESCE(CreatedAt, TransactionDate, TransferDate), 'yyyy-MM') = @month`;
-            countQuery += ` AND FORMAT(COALESCE(CreatedAt, TransactionDate, TransferDate), 'yyyy-MM') = @month`;
-        }
-        
-        // เรียงลำดับจาก ActualDate แทน CreatedAt
-        query += ` ORDER BY ActualDate DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`;
-        
-        const reqTx = pool.request().input('uid', sql.Int, userId).input('offset', sql.Int, offset).input('limit', sql.Int, limit);
-        const reqCount = pool.request().input('uid', sql.Int, userId);
-        
-        if (month && month.trim() !== '') {
-            reqTx.input('month', sql.VarChar, month);
-            reqCount.input('month', sql.VarChar, month);
-        }
-        
-        const txRes = await reqTx.query(query);
-        const countRes = await reqCount.query(countQuery);
-        const total = countRes.recordset[0].Total;
+        // 1. ดึงกระเป๋าเงิน
+        const walletRes = await pool.request()
+            .input('userId', sql.Int, userId)
+            .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @userId`);
+            
+        let wallet = { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
+        if (walletRes.recordset.length > 0) wallet = walletRes.recordset[0];
 
-        // 🌟 3. ปรับแก้ข้อมูลก่อนส่งไป Frontend ให้แสดงวันที่ถูกต้อง
-        const formattedTransactions = txRes.recordset.map(tx => {
-            return {
-                ...tx,
-                // บังคับให้ Frontend ใช้ ActualDate เป็นวันที่แสดงผลหลัก
-                CreatedAt: tx.ActualDate 
-            };
-        });
+        // 🌟 2. ดึง Statement (ไม่มีคำว่า Currency ใน SELECT แล้ว)
+        const txRes = await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('offset', sql.Int, offset)
+            .input('limit', sql.Int, limit)
+            .query(`
+                SELECT 
+                    Id, 
+                    Amount, 
+                    TransactionType, 
+                    Status, 
+                    COALESCE(CreatedAt, TransactionDate, GETDATE()) AS CreatedAt, 
+                    ReferenceId
+                FROM Transactions 
+                WHERE UserId = @userId 
+                ORDER BY COALESCE(CreatedAt, TransactionDate, GETDATE()) DESC 
+                OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+            `);
 
-        res.json({
-            success: true,
-            balance: walletData.Balance,
-            currency: walletData.Currency,      
-            lastUpdated: walletData.LastUpdated,
-            transactions: formattedTransactions,
-            totalPages: Math.ceil(total / limit) || 1,
-            currentPage: parseInt(page)
+        res.json({ 
+            success: true, 
+            balance: wallet.Balance, 
+            currency: wallet.Currency,      
+            lastUpdated: wallet.LastUpdated, 
+            transactions: txRes.recordset,
+            totalPages: 1 
         });
     } catch (err) {
-        console.error("Assets API Error:", err);
+        console.error("🔥 Assets API Error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -986,6 +972,9 @@ app.post('/check-username', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+
+
 
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
@@ -1528,11 +1517,23 @@ app.post('/api/admin/statements', async (req, res) => {
                     .input('stmtId', sql.Int, statementId)
                     .query(`UPDATE SystemStatements SET Status = 'MATCHED' WHERE Id = @stmtId`);
 
-                // 3.3 💰 เติมเงินเข้ากระเป๋า Wallet ผู้เล่น
+               // 3.3 💰 เติมเงินเข้ากระเป๋า Wallet ผู้เล่น (รองรับผู้ใช้ใหม่)
                 await transaction.request()
                     .input('uid', sql.Int, userId)
                     .input('amt', sql.Decimal(18,4), amount)
-                    .query(`UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @amt WHERE UserId = @uid`);
+                    .query(`
+                        IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @uid)
+                        BEGIN
+                            UPDATE Wallets 
+                            SET Balance = ISNULL(Balance, 0) + @amt, LastUpdated = GETDATE() 
+                            WHERE UserId = @uid;
+                        END
+                        ELSE
+                        BEGIN
+                            INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated)
+                            VALUES (@uid, @amt, 'THB', GETDATE());
+                        END
+                    `);
 
                 // 3.4 แจ้งเตือนผู้เล่น
                 const userRes = await transaction.request()
