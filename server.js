@@ -961,9 +961,6 @@ app.post('/check-username', async (req, res) => {
     }
 });
 
-// ==============================================================
-// 2. API สำหรับ Login (เข้าสู่ระบบ)
-// ==============================================================
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
     console.log("มีคนพยายาม Login ด้วยชื่อ:", username); 
@@ -975,14 +972,14 @@ app.post('/login', async (req, res) => {
             .query("SELECT * FROM UsersRegister WHERE Username = @user AND Password = @pass AND Status = 'Active'");
 
         if (result.recordset.length > 0) {
-            // 🟢 ดึงข้อมูลของผู้ใช้ที่ล็อกอินผ่าน (แถวแรกที่เจอ)
             const userData = result.recordset[0]; 
             
-            // 🟢 ส่งข้อมูลกลับไปให้ Frontend (เพิ่ม username และ country)
+            // 🟢 ส่งข้อมูลกลับไปให้ Frontend (เพิ่ม Id เข้าไปด้วย!)
             res.json({ 
                 message: "Login สำเร็จ",
-                username: userData.Username, // ดึงจากคอลัมน์ Username ใน DB
-                country: userData.Country    // ดึงจากคอลัมน์ Country ใน DB
+                id: userData.Id,             // 🌟 เพิ่มบรรทัดนี้: ส่ง Id กลับไปให้ Frontend
+                username: userData.Username,
+                country: userData.Country    
             });
         } else {
             console.log("หาข้อมูลไม่เจอใน Database หรือรหัสผิด"); 
@@ -993,26 +990,43 @@ app.post('/login', async (req, res) => {
     }
 });
 
-
-app.get('/api/wallet/assets/:userId', async (req, res) => {
-    const userId = req.params.userId;
+// ==============================================================
+// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (แก้ให้รับค่า Username แทน UserId)
+// ==============================================================
+app.get('/api/wallet/assets/:username', async (req, res) => {
+    // 🌟 เปลี่ยนมารับค่า username จาก URL แทน
+    const username = req.params.username; 
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20; // 🌟 รับ Limit 20 รายการตามที่คุณต้องการ
+    const limit = parseInt(req.query.limit) || 20; 
     const offset = (page - 1) * limit;
 
     try {
         let pool = await sql.connect(config);
         
-        // 🌟 1. ดึงกระเป๋าเงิน (อย่าลืม SELECT Currency และ LastUpdated)
+        // 🌟 0. ค้นหา UserId จากตาราง UsersRegister โดยใช้ Username
+        const userRes = await pool.request()
+            .input('username', sql.VarChar, username)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @username`);
+            
+        if (userRes.recordset.length === 0) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+        
+        // ได้ UserId ของจริงมาแล้ว! เอาไปใช้ต่อใน Query ด้านล่างได้เลย
+        const userId = userRes.recordset[0].Id; 
+
+        // 🌟 1. ดึงกระเป๋าเงิน
         const walletRes = await pool.request()
             .input('userId', sql.Int, userId)
             .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @userId`);
             
-        if (walletRes.recordset.length === 0) return res.json({ success: false, message: "Wallet not found" });
-        const wallet = walletRes.recordset[0];
+        // ถ้าเป็น User ใหม่ยังไม่มีกระเป๋า ให้ส่งยอด 0 ไปแทนการ Error
+        let wallet = { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
+        if (walletRes.recordset.length > 0) {
+            wallet = walletRes.recordset[0];
+        }
 
-        // 🌟 2. ดึง Statement (เรียงล่าสุดลงมาจำกัด 20 รายการ)
-        // อย่าลืมดึง 'DIVIDEND' มาแสดงด้วย
+        // 🌟 2. ดึง Statement (จากตาราง WalletTransactions ตามโค้ดเดิมของคุณ)
         const txRes = await pool.request()
             .input('userId', sql.Int, userId)
             .input('offset', sql.Int, offset)
@@ -1028,10 +1042,10 @@ app.get('/api/wallet/assets/:userId', async (req, res) => {
         res.json({ 
             success: true, 
             balance: wallet.Balance, 
-            currency: wallet.Currency,      // 🌟 ส่งค่า Currency กลับไป Frontend
-            lastUpdated: wallet.LastUpdated, // 🌟 ส่ง LastUpdated กลับไปให้ Frontend คำนวณตัวเลขวิ่ง
+            currency: wallet.Currency,      
+            lastUpdated: wallet.LastUpdated, 
             transactions: txRes.recordset,
-            totalPages: 1 // (ปรับ Query นับจำนวนหน้าได้ตามต้องการครับ)
+            totalPages: 1 
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
