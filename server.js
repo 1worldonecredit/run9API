@@ -438,7 +438,8 @@ app.get('/api/admin/transactions', async (req, res) => {
 // 🌟 API (Admin): 2. แอดมินกดยืนยัน (Approve) และคิดเงินปันผลอัตโนมัติ!
 // ==============================================================
 app.post('/api/admin/transactions/approve', async (req, res) => {
-    const { transactionId, userId, amount, username } = req.body;
+    // 🌟 1. รับมาแค่ transactionId ตัวเดียวพอ ปลอดภัยกว่า!
+    const { transactionId } = req.body;
 
     try {
         let pool = await sql.connect(config);
@@ -446,64 +447,90 @@ app.post('/api/admin/transactions/approve', async (req, res) => {
         await transaction.begin();
 
         try {
-            // 🌟 1. กระบวนการคำนวณเงินปันผล + อัปเดตเงิน + รีเซ็ตเวลา (ทำรวดเดียวใน SQL เพื่อป้องกันข้อมูลชนกัน)
+            // 🌟 2. ดึงข้อมูลบิล (Transactions) เพื่อหา UserId และ Amount ที่แท้จริง ป้องกันข้อมูลผิดพลาด
+            const txCheck = await transaction.request()
+                .input('txId', sql.Int, transactionId)
+                .query(`
+                    SELECT t.UserId, t.Amount, u.Username 
+                    FROM Transactions t
+                    LEFT JOIN UsersRegister u ON t.UserId = u.Id
+                    WHERE t.Id = @txId AND t.Status = 'PENDING'
+                `);
+
+            if (txCheck.recordset.length === 0) {
+                throw new Error("ไม่พบบิลนี้ หรือบิลถูกอนุมัติไปแล้ว");
+            }
+
+            // ได้ข้อมูลที่ชัวร์ 100% มาใช้งาน
+            const actualUserId = txCheck.recordset[0].UserId;
+            const actualAmount = txCheck.recordset[0].Amount;
+            const actualUsername = txCheck.recordset[0].Username || 'ไม่ระบุชื่อ';
+
+            // 🌟 3. กระบวนการคำนวณเงินปันผล + อัปเดตเงิน (เพิ่มระบบเช็กสร้างกระเป๋าสำหรับ User ใหม่)
             const processDividendAndBalance = `
-                DECLARE @CurrentBalance DECIMAL(18,4);
-                DECLARE @LastUpdated DATETIME;
+                DECLARE @CurrentBalance DECIMAL(18,4) = 0;
+                DECLARE @LastUpdated DATETIME = NULL;
                 DECLARE @Now DATETIME = GETDATE();
                 DECLARE @Dividend DECIMAL(18,4) = 0;
                 DECLARE @DaysPassed FLOAT = 0;
-                DECLARE @Rate FLOAT = 0.10; -- อัตราเงินปันผล 10% ต่อปี
+                DECLARE @Rate FLOAT = 0.10; 
 
-                -- ล็อกแถวและอ่านค่ายอดเงิน + เวลาอัปเดตล่าสุด
+                -- อ่านค่ายอดเงิน + เวลาอัปเดตล่าสุด
                 SELECT @CurrentBalance = ISNULL(Balance, 0), @LastUpdated = LastUpdated 
                 FROM Wallets WITH (UPDLOCK) 
                 WHERE UserId = @uid;
 
-                -- ก. คำนวณเงินปันผล (ถ้ายอดเงิน > 0 และเคยมีการอัปเดตเวลา)
+                -- ก. คำนวณเงินปันผล
                 IF @CurrentBalance > 0 AND @LastUpdated IS NOT NULL
                 BEGIN
                     SET @DaysPassed = DATEDIFF(SECOND, @LastUpdated, @Now) / 86400.0;
                     SET @Dividend = @CurrentBalance * @Rate * (@DaysPassed / 365.0);
                 END
 
-                -- ข. ถ้ามีเงินปันผล ให้บวกเข้ากระเป๋า และสร้างบิลประวัติ 'DIVIDEND'
+                -- ข. จ่ายเงินปันผล
                 IF @Dividend > 0.000001
                 BEGIN
                     SET @CurrentBalance = @CurrentBalance + @Dividend;
-                    
-                    INSERT INTO Transactions (UserId, TransactionType, Amount, Status, TransferDate, TransferTime)
-                    VALUES (@uid, 'DIVIDEND', @Dividend, 'COMPLETED', CONVERT(VARCHAR(10), @Now, 120), CONVERT(VARCHAR(5), @Now, 108));
+                    INSERT INTO Transactions (UserId, TransactionType, Amount, Status, CreatedAt)
+                    VALUES (@uid, 'DIVIDEND', @Dividend, 'COMPLETED', @Now);
                 END
 
-                -- ค. จัดการยอดที่แอดมินอนุมัติบวกเข้าไป
+                -- ค. บวกยอดเงินฝากที่แอดมินอนุมัติ
                 SET @CurrentBalance = @CurrentBalance + @amt;
 
-                -- ง. อัปเดตกระเป๋ากลับไป พร้อมเซ็ต LastUpdated เป็นเวลาปัจจุบันเพื่อเริ่มนับปันผลรอบใหม่!
-                UPDATE Wallets 
-                SET Balance = @CurrentBalance, LastUpdated = @Now 
-                WHERE UserId = @uid;
+                -- 🌟 ง. อัปเดตกระเป๋ากลับไป (ถ้ามีกระเป๋าให้อัปเดต ถ้าไม่มีให้สร้างใหม่)
+                IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @uid)
+                BEGIN
+                    UPDATE Wallets 
+                    SET Balance = @CurrentBalance, LastUpdated = @Now 
+                    WHERE UserId = @uid;
+                END
+                ELSE
+                BEGIN
+                    INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated)
+                    VALUES (@uid, @CurrentBalance, 'THB', @Now);
+                END
             `;
 
             await transaction.request()
-                .input('uid', sql.Int, userId)
-                .input('amt', sql.Decimal(18,4), amount)
+                .input('uid', sql.Int, actualUserId)
+                .input('amt', sql.Decimal(18,4), actualAmount)
                 .query(processDividendAndBalance);
 
-            // 2. อัปเดตสถานะบิลหลักที่แอดมินกดอนุมัติเป็น 'COMPLETED'
+            // 4. อัปเดตสถานะบิลหลักที่แอดมินกดอนุมัติเป็น 'COMPLETED'
             await transaction.request()
                 .input('txId', sql.Int, transactionId)
                 .query(`UPDATE Transactions SET Status = 'COMPLETED' WHERE Id = @txId`);
 
-            // 3. ส่ง Notification แจ้งผู้เล่นว่า "เงินเข้าแล้ว!"
+            // 5. ส่ง Notification แจ้งผู้เล่นว่า "เงินเข้าแล้ว!"
             await transaction.request()
-                .input('user', sql.VarChar, username)
+                .input('user', sql.VarChar, actualUsername)
                 .input('title', sql.NVarChar, 'ยอดเงินเข้ากระเป๋าแล้ว')
-                .input('msg', sql.NVarChar, `แอดมินตรวจสอบยอดเงิน ${amount} บาท สำเร็จ! ยอดเงินถูกเพิ่มเข้ากระเป๋าของคุณแล้ว`)
+                .input('msg', sql.NVarChar, `แอดมินตรวจสอบยอดเงินฝากสำเร็จ! ยอดเงินถูกเพิ่มเข้ากระเป๋าของคุณแล้ว`)
                 .query(`INSERT INTO Notifications (Username, Title, Message) VALUES (@user, @title, @msg)`);
 
             await transaction.commit();
-            res.json({ success: true, message: "กระทบยอด, จ่ายปันผล และเติมเงินสำเร็จ!" });
+            res.json({ success: true, message: "กระทบยอดและเติมเงินสำเร็จ!" });
         } catch (err) {
             await transaction.rollback();
             throw err;
