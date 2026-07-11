@@ -1877,32 +1877,42 @@ app.post('/api/game/play', async (req, res) => {
     }
 });
 
-
 // ==============================================================
-// 🌟 API: สร้างคำขอฝาก/ถอนเงิน P2P (Create P2P Order)
+// 🌟 API: สร้างคำขอฝาก/ถอนเงิน P2P (อัปเดตใช้ Username)
 // ==============================================================
 app.post('/api/p2p/create-order', async (req, res) => {
-    const { userId, amount, orderType } = req.body; // orderType = 'DEPOSIT' หรือ 'WITHDRAWAL'
+    // 🌟 รับค่า username มาแทน userId
+    const { username, amount, orderType } = req.body; 
 
     try {
         let pool = await sql.connect(config);
         
-        // 1. ดึงค่าธรรมเนียมจากตาราง P2P_FeeTiers ตามจำนวนเงิน
+        // 🌟 1. ค้นหา RequesterId จาก Username
+        const userRes = await pool.request()
+            .input('username', sql.VarChar, username)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @username`);
+            
+        if (userRes.recordset.length === 0) {
+            return res.status(404).json({ success: false, message: "ไม่พบข้อมูลผู้ใช้งานในระบบ" });
+        }
+        const requesterId = userRes.recordset[0].Id;
+
+        // 2. ดึงค่าธรรมเนียมจากตาราง P2P_FeeTiers
         const feeRes = await pool.request()
             .input('amount', sql.Decimal, amount)
             .query(`SELECT FeePercentage FROM P2P_FeeTiers WHERE @amount >= MinAmount AND @amount <= MaxAmount`);
             
         if (feeRes.recordset.length === 0) {
-            return res.status(400).json({ success: false, message: "ไม่พบข้อมูลค่าธรรมเนียมสำหรับจำนวนเงินนี้" });
+            return res.status(400).json({ success: false, message: "ไม่พบข้อมูลเรทค่าธรรมเนียมสำหรับจำนวนเงินนี้" });
         }
 
         const feePercent = feeRes.recordset[0].FeePercentage;
         const feeAmount = (amount * feePercent) / 100;
 
-        // 2. บันทึกคำขอลงตาราง P2P_Orders
+        // 3. บันทึกคำขอลงตาราง P2P_Orders
         await pool.request()
             .input('type', sql.VarChar, orderType)
-            .input('uid', sql.Int, userId)
+            .input('uid', sql.Int, requesterId)
             .input('amt', sql.Decimal, amount)
             .input('fee', sql.Decimal, feeAmount)
             .query(`
@@ -1910,18 +1920,13 @@ app.post('/api/p2p/create-order', async (req, res) => {
                 VALUES (@type, @uid, @amt, @fee, 'PENDING')
             `);
 
-        res.json({ 
-            success: true, 
-            message: "สร้างคำขอสำเร็จ", 
-            feeCharged: feeAmount 
-        });
+        res.json({ success: true, message: "สร้างคำขอสำเร็จ", feeCharged: feeAmount });
 
     } catch (err) {
         console.error("🔥 P2P Create Order Error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
-
 
 // ==============================================================
 // 🌟 API: ดึงรายการ P2P ที่รอคนรับงาน (แสดงใน Market)
