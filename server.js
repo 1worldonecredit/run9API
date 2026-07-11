@@ -2108,19 +2108,21 @@ app.post('/api/p2p/match-order', async (req, res) => {
 
         try {
             // 1. เช็กสถานะงาน (ใช้ UPDLOCK ล็อกแถวนี้ไว้ชั่วคราว ป้องกันการแย่งข้อมูล)
+            // 🌟 แก้ไข: เพิ่มการคำนวณ DiffMinutes จากฝั่ง SQL โดยตรง เพื่อเลี่ยงปัญหา Timezone
             const orderCheck = await transaction.request()
                 .input('oId', sql.Int, orderId)
-                .query(`SELECT Amount, Status, RequesterId, CreatedAt FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
+                .query(`
+                    SELECT Amount, Status, RequesterId, CreatedAt, 
+                    DATEDIFF(MINUTE, CreatedAt, GETDATE()) AS DiffMinutes 
+                    FROM P2P_Orders WITH (UPDLOCK) 
+                    WHERE Id = @oId
+                `);
                 
             if (orderCheck.recordset.length === 0) throw new Error("ไม่พบรายการนี้");
             const orderData = orderCheck.recordset[0];
             
-            // 🌟 ตรวจสอบว่าเกิน 5 นาทีหรือยังตอนที่กดรับ
-            const orderTime = new Date(orderData.CreatedAt);
-            const now = new Date();
-            const diffMinutes = Math.floor((now - orderTime) / (100 * 60));
-            
-            if (diffMinutes > 5) {
+            // 🌟 ตรวจสอบว่าเกิน 5 นาทีหรือยัง (ใช้ค่าเวลาจาก Database ล้วนๆ)
+            if (orderData.DiffMinutes > 5) {
                  await transaction.request()
                     .input('oId', sql.Int, orderId)
                     .query(`UPDATE P2P_Orders SET Status = 'EXPIRED' WHERE Id = @oId`);
@@ -2179,7 +2181,6 @@ app.post('/api/p2p/match-order', async (req, res) => {
         res.status(400).json({ success: false, message: err.message });
     }
 });
-
 
 // ==============================================================
 // 🌟 API P2P (Step 3): ผู้ฝากเงินอัปโหลดสลิป
