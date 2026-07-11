@@ -2207,6 +2207,59 @@ app.post('/api/p2p/upload-slip', async (req, res) => {
     }
 });
  
+// ==============================================================
+// 🌟 API P2P (Step 4): ผู้รับงานยืนยันได้รับยอดเงิน (จบงาน)
+// ==============================================================
+app.post('/api/p2p/confirm-receipt', async (req, res) => {
+    const { orderId } = req.body;
+
+    try {
+        let pool = await sql.connect(config);
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            // 1. เช็กข้อมูล Order
+            const orderRes = await transaction.request()
+                .input('oId', sql.Int, orderId)
+                .query(`SELECT Amount, RequesterId, Status FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
+                
+            if (orderRes.recordset.length === 0) throw new Error("ไม่พบรายการนี้");
+            const orderData = orderRes.recordset[0];
+
+            if (orderData.Status !== 'SLIP_UPLOADED') throw new Error("สถานะรายการไม่ถูกต้อง");
+
+            // 2. 💸 โอนเงินเข้ากระเป๋า "ผู้ฝากเงิน (Requester)"
+            // (เงิน Escrow ถูกหักจากคนรับงานไปแล้วตอนกด MATCHED ตอนนี้แค่เอามาเติมให้คนฝาก)
+            await transaction.request()
+                .input('uid', sql.Int, orderData.RequesterId)
+                .input('amt', sql.Decimal(18,4), orderData.Amount)
+                .query(`
+                    UPDATE Wallets SET Balance = Balance + @amt WHERE UserId = @uid
+                `);
+
+            // 3. ปิดงาน เปลี่ยน Status เป็น COMPLETED
+            await transaction.request()
+                .input('oId', sql.Int, orderId)
+                .query(`
+                    UPDATE P2P_Orders SET Status = 'COMPLETED' WHERE Id = @oId
+                `);
+
+            await transaction.commit();
+            res.json({ success: true, message: "ทำรายการสำเร็จ! ระบบได้โอนเงินเข้ากระเป๋าผู้ใช้งานเรียบร้อยแล้ว" });
+
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
+        }
+
+    } catch (err) {
+        console.error("🔥 P2P Confirm Receipt Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
