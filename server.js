@@ -324,7 +324,8 @@ app.post('/api/wallet/bind-bank', async (req, res) => {
         res.status(500).json({ error: "เซิร์ฟเวอร์ขัดข้อง: " + err.message });
     }
 });
-
+// ==============================================================
+// 🌟 API ดึง dropdown list หน้า Profile เพิ่มบัญชีธนาคาร
 // ==============================================================
 // 🌟 API: ดึงรายชื่อธนาคารทั้งหมด (แบบไม่มีเงื่อนไข เพื่อทดสอบ)
 // ==============================================================
@@ -345,6 +346,9 @@ app.get('/api/system-banks', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+
+
 
 // ==============================================================
 // 🌟 API (Admin): พนักงานเพิ่มบัญชีธนาคารของระบบ (อัปเดตรองรับ Country)
@@ -2176,6 +2180,32 @@ app.post('/api/p2p/match-order', async (req, res) => {
     }
 });
 
+
+// ==============================================================
+// 🌟 API P2P (Step 3): ผู้ฝากเงินอัปโหลดสลิป
+// ==============================================================
+app.post('/api/p2p/upload-slip', async (req, res) => {
+    const { orderId, slipImageBase64 } = req.body;
+
+    try {
+        let pool = await sql.connect(config);
+        
+        // อัปเดตสถานะเป็น SLIP_UPLOADED และเซฟรูป
+        await pool.request()
+            .input('oId', sql.Int, orderId)
+            .input('slip', sql.NVarChar(sql.MAX), slipImageBase64)
+            .query(`
+                UPDATE P2P_Orders 
+                SET Status = 'SLIP_UPLOADED', SlipUrl = @slip 
+                WHERE Id = @oId AND Status = 'MATCHED'
+            `);
+
+        res.json({ success: true, message: "อัปโหลดสลิปสำเร็จ รอผู้รับงานตรวจสอบ" });
+    } catch (err) {
+        console.error("🔥 P2P Upload Slip Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
  
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
