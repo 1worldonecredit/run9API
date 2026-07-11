@@ -326,15 +326,31 @@ app.post('/api/wallet/bind-bank', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API (Admin): ดึงรายชื่อบัญชีธนาคารของระบบทั้งหมด
+// 🌟 API: ดึงรายชื่อธนาคารเพื่อแสดงใน Dropdown
 // ==============================================================
-app.get('/api/admin/system-banks', async (req, res) => {
+app.get('/api/system-banks', async (req, res) => {
+    const { country } = req.query; // รับค่าประเทศจากหน้าเว็บ (เช่น TH หรือ LA)
+
     try {
         let pool = await sql.connect(config);
-        const result = await pool.request().query("SELECT * FROM SystemBankAccounts ORDER BY CreatedAt DESC");
+        let request = pool.request();
+        
+        let sqlQuery = `SELECT Id, BankName FROM SystemBanks WHERE IsActive = 1`;
+
+        // ถ้าหน้าเว็บส่งตัวย่อประเทศมา ให้กรองเฉพาะธนาคารของประเทศนั้น
+        if (country) {
+            sqlQuery += ` AND Country = @country`;
+            request.input('country', sql.VarChar, country);
+        }
+
+        sqlQuery += ` ORDER BY BankName ASC`;
+
+        const result = await request.query(sqlQuery);
         res.json({ success: true, banks: result.recordset });
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("🔥 Fetch Banks Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
