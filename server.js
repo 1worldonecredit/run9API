@@ -1878,38 +1878,48 @@ app.post('/api/game/play', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API: สร้างคำขอฝาก/ถอนเงิน P2P (อัปเดตใช้ Username)
+// 🌟 API: สร้างคำขอฝากเงิน (ห้ามทำรายการซ้อน)
 // ==============================================================
 app.post('/api/p2p/create-order', async (req, res) => {
-    // 🌟 รับค่า username มาแทน userId
     const { username, amount, orderType } = req.body; 
 
     try {
         let pool = await sql.connect(config);
         
-        // 🌟 1. ค้นหา RequesterId จาก Username
+        // 1. หา RequesterId
         const userRes = await pool.request()
             .input('username', sql.VarChar, username)
             .query(`SELECT Id FROM UsersRegister WHERE Username = @username`);
             
-        if (userRes.recordset.length === 0) {
-            return res.status(404).json({ success: false, message: "ไม่พบข้อมูลผู้ใช้งานในระบบ" });
-        }
+        if (userRes.recordset.length === 0) return res.status(404).json({ success: false, message: "ไม่พบผู้ใช้งาน" });
         const requesterId = userRes.recordset[0].Id;
 
-        // 2. ดึงค่าธรรมเนียมจากตาราง P2P_FeeTiers
+        // 🌟 2. เช็กว่ามีคำขอที่ยัง PENDING อยู่หรือไม่ (ป้องกันสแปม)
+        const pendingCheckRes = await pool.request()
+            .input('uid', sql.Int, requesterId)
+            .query(`
+                SELECT COUNT(*) as PendingCount 
+                FROM P2P_Orders 
+                WHERE RequesterId = @uid 
+                AND Status = 'PENDING' 
+                AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) <= 5
+            `);
+            
+        if (pendingCheckRes.recordset[0].PendingCount > 0) {
+             return res.status(400).json({ success: false, message: "คุณมีคำขอฝากเงินที่กำลังรอดำเนินการอยู่ กรุณารอสักครู่ก่อนทำรายการใหม่" });
+        }
+
+        // 3. ดึงค่าธรรมเนียม
         const feeRes = await pool.request()
             .input('amount', sql.Decimal, amount)
             .query(`SELECT FeePercentage FROM P2P_FeeTiers WHERE @amount >= MinAmount AND @amount <= MaxAmount`);
             
-        if (feeRes.recordset.length === 0) {
-            return res.status(400).json({ success: false, message: "ไม่พบข้อมูลเรทค่าธรรมเนียมสำหรับจำนวนเงินนี้" });
-        }
+        if (feeRes.recordset.length === 0) return res.status(400).json({ success: false, message: "ไม่พบข้อมูลเรทค่าธรรมเนียม" });
 
         const feePercent = feeRes.recordset[0].FeePercentage;
         const feeAmount = (amount * feePercent) / 100;
 
-        // 3. บันทึกคำขอลงตาราง P2P_Orders
+        // 4. บันทึกคำขอ
         await pool.request()
             .input('type', sql.VarChar, orderType)
             .input('uid', sql.Int, requesterId)
@@ -1923,18 +1933,17 @@ app.post('/api/p2p/create-order', async (req, res) => {
         res.json({ success: true, message: "สร้างคำขอสำเร็จ", feeCharged: feeAmount });
 
     } catch (err) {
-        console.error("🔥 P2P Create Order Error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
+
 // ==============================================================
-// 🌟 API: ดึงรายการ P2P ที่รอคนรับงาน (แก้ Error 500 แล้ว)
+// 🌟 API: ดึงรายการที่รอคนรับงาน (กรองเฉพาะที่ไม่เกิน 5 นาที)
 // ==============================================================
 app.get('/api/p2p/orders/pending', async (req, res) => {
     try {
         let pool = await sql.connect(config);
-        // 🌟 เอา u.ProfileImageUrl ออก ป้องกัน Error คอลัมน์ไม่มี
         const result = await pool.request().query(`
             SELECT 
                 o.Id, 
@@ -1946,15 +1955,15 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
             FROM P2P_Orders o
             JOIN UsersRegister u ON o.RequesterId = u.Id
             WHERE o.Status = 'PENDING'
+            -- 🌟 ซ่อนงานที่เกิน 5 นาที
+            AND DATEDIFF(MINUTE, o.CreatedAt, GETDATE()) <= 5
             ORDER BY o.CreatedAt DESC
         `);
         res.json({ success: true, orders: result.recordset });
     } catch (err) {
-        console.error("🔥 Fetch P2P Pending Error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
-
 // ==============================================================
 // 🌟 API (ใหม่): ดึงประวัติคำขอ P2P ของตัวเอง (My Orders)
 // ==============================================================
@@ -2026,9 +2035,25 @@ app.post('/api/p2p/match-order', async (req, res) => {
 
         try {
             // 1. เช็กสถานะงาน (ใช้ UPDLOCK ล็อกแถวนี้ไว้ชั่วคราว ป้องกันการแย่งข้อมูล)
+           try {
             const orderCheck = await transaction.request()
                 .input('oId', sql.Int, orderId)
-                .query(`SELECT Amount, Status, RequesterId FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
+                .query(`SELECT Amount, Status, RequesterId, CreatedAt FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
+                
+            if (orderCheck.recordset.length === 0) throw new Error("ไม่พบรายการนี้");
+            const orderData = orderCheck.recordset[0];
+            
+            // 🌟 ตรวจสอบว่าเกิน 5 นาทีหรือยังตอนที่กดรับ
+            const orderTime = new Date(orderData.CreatedAt);
+            const now = new Date();
+            const diffMinutes = Math.floor((now - orderTime) / (1000 * 60));
+            
+            if (diffMinutes > 5) {
+                 await transaction.request()
+                    .input('oId', sql.Int, orderId)
+                    .query(`UPDATE P2P_Orders SET Status = 'EXPIRED' WHERE Id = @oId`);
+                 throw new Error("คำขอนี้หมดอายุแล้ว (เกิน 5 นาที)");
+            }
                 
             if (orderCheck.recordset.length === 0) throw new Error("ไม่พบรายการนี้ในระบบ");
             const orderData = orderCheck.recordset[0];
