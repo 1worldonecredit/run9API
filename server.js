@@ -1976,6 +1976,33 @@ app.get('/api/p2p/my-orders/:username', async (req, res) => {
     }
 });
 
+
+// ==============================================================
+// 🌟 API: ดึงข้อมูลบัญชีธนาคารของผู้ใช้ (สำหรับหน้า P2P TopUp)
+// ==============================================================
+app.get('/api/user/bank-account/:username', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        const result = await pool.request()
+            .input('username', sql.VarChar, req.params.username)
+            .query(`
+                SELECT TOP 1 BankName, AccountNumber 
+                FROM UserBankAccounts 
+                WHERE Username = @username AND Status = 'APPROVED' 
+                ORDER BY CreatedAt DESC
+            `);
+            
+        if (result.recordset.length > 0) {
+            res.json({ success: true, bank: result.recordset[0] });
+        } else {
+            res.json({ success: false, message: 'ยังไม่มีบัญชีที่อนุมัติแล้ว' });
+        }
+    } catch (err) {
+        console.error("Fetch Bank Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ==============================================================
 // 🌟 API: กดรับงาน P2P (หักเงิน Escrow + สร้างรหัสยืนยัน)
 // ==============================================================
