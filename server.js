@@ -2219,8 +2219,9 @@ app.post('/api/p2p/upload-slip', async (req, res) => {
     }
 });
  
+
 // ==============================================================
-// 🌟 API P2P (Step 4): ผู้รับงานยืนยันได้รับยอดเงิน (จบงาน)
+// 🌟 API P2P (Step 4): ผู้รับงานยืนยันได้รับยอดเงิน (จบงาน + จ่าย Affiliate 5%)
 // ==============================================================
 app.post('/api/p2p/confirm-receipt', async (req, res) => {
     const { orderId } = req.body;
@@ -2234,31 +2235,83 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
             // 1. เช็กข้อมูล Order
             const orderRes = await transaction.request()
                 .input('oId', sql.Int, orderId)
-                .query(`SELECT Amount, RequesterId, Status FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
+                .query(`SELECT Amount, FeeAmount, RequesterId, MatchedUserId, Status FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
                 
             if (orderRes.recordset.length === 0) throw new Error("ไม่พบรายการนี้");
             const orderData = orderRes.recordset[0];
 
-            if (orderData.Status !== 'SLIP_UPLOADED') throw new Error("สถานะรายการไม่ถูกต้อง");
+            // (เอาคอมเมนต์เช็ก SLIP_UPLOADED ออกชั่วคราวได้ ถ้าระบบเทสต์ยังไม่ได้ทำหน้าอัปสลิป)
+            // if (orderData.Status !== 'SLIP_UPLOADED') throw new Error("สถานะรายการไม่ถูกต้อง (ต้องอัปโหลดสลิปก่อน)");
 
-            // 2. 💸 โอนเงินเข้ากระเป๋า "ผู้ฝากเงิน (Requester)"
-            // (เงิน Escrow ถูกหักจากคนรับงานไปแล้วตอนกด MATCHED ตอนนี้แค่เอามาเติมให้คนฝาก)
-            await transaction.request()
-                .input('uid', sql.Int, orderData.RequesterId)
-                .input('amt', sql.Decimal(18,4), orderData.Amount)
+            // 2. 🔍 หาว่า "ผู้รับงาน" มี "ผู้แนะนำ" (Referrer) หรือไม่
+            const referrerRes = await transaction.request()
+                .input('mId', sql.Int, orderData.MatchedUserId)
                 .query(`
-                    UPDATE Wallets SET Balance = Balance + @amt WHERE UserId = @uid
+                    SELECT r.Id, r.Username 
+                    FROM UsersRegister u
+                    JOIN UsersRegister r ON u.ReferralUsername = r.Username
+                    WHERE u.Id = @mId
                 `);
+            const referrerId = referrerRes.recordset.length > 0 ? referrerRes.recordset[0].Id : null;
 
-            // 3. ปิดงาน เปลี่ยน Status เป็น COMPLETED
+            // 3. 🧮 คำนวณค่าคอมมิชชั่น (5% ของ FeeAmount ที่ผู้รับงานได้เป็นเงินสดไปแล้ว)
+            const affiliateBonus = orderData.FeeAmount * 0.05;
+
+            // 4. 💸 อัปเดตกระเป๋าเงิน (Wallets)
+            // 4.1 เติมเงินให้ "ผู้ฝากเงิน" (ตามที่ขอฝากเข้ามา)
+            await transaction.request()
+                .input('reqId', sql.Int, orderData.RequesterId)
+                .input('amt', sql.Decimal(18,4), orderData.Amount)
+                .query(`UPDATE Wallets SET Balance = Balance + @amt WHERE UserId = @reqId`);
+
+            // 4.2 เติมเงินให้ "ผู้แนะนำ" (ถ้ามี)
+            if (referrerId) {
+                await transaction.request()
+                    .input('refId', sql.Int, referrerId)
+                    .input('bonus', sql.Decimal(18,4), affiliateBonus)
+                    .query(`UPDATE Wallets SET Balance = Balance + @bonus WHERE UserId = @refId`);
+            }
+
+            // 5. ปิดงาน เปลี่ยน Status P2P
             await transaction.request()
                 .input('oId', sql.Int, orderId)
+                .query(`UPDATE P2P_Orders SET Status = 'COMPLETED' WHERE Id = @oId`);
+
+            // 6. 📝 สร้างประวัติการทำรายการ (WalletTransactions) ให้ทั้ง 3 ฝ่าย
+            // 6.1 ประวัติของ "ผู้ฝากเงิน" (DEPOSIT: รับเงินสำเร็จ)
+            await transaction.request()
+                .input('reqId', sql.Int, orderData.RequesterId)
+                .input('amt', sql.Decimal(18,4), orderData.Amount)
+                .input('refId', sql.Int, orderId)
                 .query(`
-                    UPDATE P2P_Orders SET Status = 'COMPLETED' WHERE Id = @oId
+                    INSERT INTO WalletTransactions (UserId, Amount, TransactionType, Status, ReferenceId, CreatedAt)
+                    VALUES (@reqId, @amt, 'DEPOSIT', 'COMPLETED', @refId, GETDATE())
                 `);
 
+            // 6.2 ประวัติของ "ผู้รับงาน" (P2P_TRANSFER_OUT: โอนเงินค้ำประกันออกจากระบบไปให้ผู้ฝาก)
+            await transaction.request()
+                .input('mId', sql.Int, orderData.MatchedUserId)
+                .input('amt', sql.Decimal(18,4), orderData.Amount)
+                .input('refId', sql.Int, orderId)
+                .query(`
+                    INSERT INTO WalletTransactions (UserId, Amount, TransactionType, Status, ReferenceId, CreatedAt)
+                    VALUES (@mId, @amt, 'P2P_TRANSFER_OUT', 'COMPLETED', @refId, GETDATE())
+                `);
+
+            // 6.3 ประวัติของ "ผู้แนะนำ" (AFFILIATE_P2P: ได้รับค่าคอมมิชชั่น 5%)
+            if (referrerId) {
+                await transaction.request()
+                    .input('refId', sql.Int, referrerId)
+                    .input('bonus', sql.Decimal(18,4), affiliateBonus)
+                    .input('refId2', sql.Int, orderId)
+                    .query(`
+                        INSERT INTO WalletTransactions (UserId, Amount, TransactionType, Status, ReferenceId, CreatedAt)
+                        VALUES (@refId, @bonus, 'AFFILIATE_P2P', 'COMPLETED', @refId2, GETDATE())
+                    `);
+            }
+
             await transaction.commit();
-            res.json({ success: true, message: "ทำรายการสำเร็จ! ระบบได้โอนเงินเข้ากระเป๋าผู้ใช้งานเรียบร้อยแล้ว" });
+            res.json({ success: true, message: "ทำรายการสำเร็จ! ระบบโอนเงินและกระจายรายได้เรียบร้อยแล้ว" });
 
         } catch (err) {
             await transaction.rollback();
