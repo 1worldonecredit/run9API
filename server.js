@@ -1878,7 +1878,49 @@ app.post('/api/game/play', async (req, res) => {
 });
 
 
+// ==============================================================
+// 🌟 API: สร้างคำขอฝาก/ถอนเงิน P2P (Create P2P Order)
+// ==============================================================
+app.post('/api/p2p/create-order', async (req, res) => {
+    const { userId, amount, orderType } = req.body; // orderType = 'DEPOSIT' หรือ 'WITHDRAWAL'
 
+    try {
+        let pool = await sql.connect(config);
+        
+        // 1. ดึงค่าธรรมเนียมจากตาราง P2P_FeeTiers ตามจำนวนเงิน
+        const feeRes = await pool.request()
+            .input('amount', sql.Decimal, amount)
+            .query(`SELECT FeePercentage FROM P2P_FeeTiers WHERE @amount >= MinAmount AND @amount <= MaxAmount`);
+            
+        if (feeRes.recordset.length === 0) {
+            return res.status(400).json({ success: false, message: "ไม่พบข้อมูลค่าธรรมเนียมสำหรับจำนวนเงินนี้" });
+        }
+
+        const feePercent = feeRes.recordset[0].FeePercentage;
+        const feeAmount = (amount * feePercent) / 100;
+
+        // 2. บันทึกคำขอลงตาราง P2P_Orders
+        await pool.request()
+            .input('type', sql.VarChar, orderType)
+            .input('uid', sql.Int, userId)
+            .input('amt', sql.Decimal, amount)
+            .input('fee', sql.Decimal, feeAmount)
+            .query(`
+                INSERT INTO P2P_Orders (OrderType, RequesterId, Amount, FeeAmount, Status)
+                VALUES (@type, @uid, @amt, @fee, 'PENDING')
+            `);
+
+        res.json({ 
+            success: true, 
+            message: "สร้างคำขอสำเร็จ", 
+            feeCharged: feeAmount 
+        });
+
+    } catch (err) {
+        console.error("🔥 P2P Create Order Error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
 
  
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
