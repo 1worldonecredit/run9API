@@ -1122,12 +1122,12 @@ app.get('/api/user/profile-stats', async (req, res) => {
             profileData.LastName = '';
         }
 
-       // 🌟 [แก้ไขจุดนี้] ดึงประวัติบัญชีธนาคารที่ใช้งานปัจจุบันพ่วงคอลัมน์โลโก้
-        const bankRes = await pool.request().input('user', sql.VarChar, username).query(`
-            SELECT BankName, AccountNumber, AccountName, BankLogo 
-            FROM UserBankAccounts 
-            WHERE Username = @user AND Status = 'Active'
-        `);
+       // 🌟 [แก้ไขแล้ว] ดึงประวัติบัญชีธนาคาร (รองรับทั้ง Active และ APPROVED)
+       const bankRes = await pool.request().input('user', sql.VarChar, username).query(`
+           SELECT BankName, AccountNumber, AccountName, BankLogo 
+           FROM UserBankAccounts 
+           WHERE Username = @user AND (Status = 'Active' OR Status = 'APPROVED')
+       `);
         const bankData = bankRes.recordset.length > 0 ? bankRes.recordset[0] : null;
 
         res.json({
