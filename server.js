@@ -87,30 +87,41 @@ async function processNewDayGame() {
 }
 
 // ==============================================================
-// 5. API เพิ่มชื่อ นามสกุล (ดึงเฉพาะรูปที่ Active)
+// 🌟 API: บันทึก/อัปเดต ชื่อ-นามสกุล (ลงตาราง UserNames)
 // ==============================================================
-app.post('/update-name', async (req, res) => {
+app.post('/api/user/update-name', async (req, res) => {
     const { username, firstName, lastName } = req.body;
+
     try {
         let pool = await sql.connect(config);
-        // 1. ปรับชื่อเก่าทั้งหมดให้เป็น Inactive
-        await pool.request()
+        
+        // 1. เช็กว่าเคยมีชื่อในระบบหรือยัง
+        const checkName = await pool.request()
             .input('user', sql.VarChar, username)
-            .query("UPDATE UserNames SET Status = 'Inactive' WHERE Username = @user");
+            .query(`SELECT Id FROM UserNames WHERE Username = @user`);
 
-        // 2. Insert ชื่อใหม่ลงไป พร้อมตั้งค่าเป็น Active
-        await pool.request()
-            .input('user', sql.VarChar, username)
-            .input('fname', sql.NVarChar, firstName)
-            .input('lname', sql.NVarChar, lastName)
-            .query("INSERT INTO UserNames (Username, FirstName, LastName, Status) VALUES (@user, @fname, @lname, 'Active')");
+        if (checkName.recordset.length > 0) {
+            // 🔄 มีแล้ว -> อัปเดต และบังคับให้ Status เป็น Active
+            await pool.request()
+                .input('user', sql.VarChar, username)
+                .input('fname', sql.NVarChar, firstName)
+                .input('lname', sql.NVarChar, lastName)
+                .query(`UPDATE UserNames SET FirstName = @fname, LastName = @lname, Status = 'Active' WHERE Username = @user`);
+        } else {
+            // 🆕 ยังไม่มี -> เพิ่มใหม่ พร้อมกำหนด Status เป็น Active
+            await pool.request()
+                .input('user', sql.VarChar, username)
+                .input('fname', sql.NVarChar, firstName)
+                .input('lname', sql.NVarChar, lastName)
+                .query(`INSERT INTO UserNames (Username, FirstName, LastName, Status, CreatedAt) VALUES (@user, @fname, @lname, 'Active', GETDATE())`);
+        }
 
-        res.json({ message: "อัปเดตชื่อ-สกุลสำเร็จ" });
+        res.json({ success: true, message: "บันทึกชื่อ-นามสกุลสำเร็จ!" });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("🔥 Update Name Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
-
 // ==============================================================
 // 🌟 1. CRON JOB: สุ่มเลขรางวัลและทบยอด ทุกเที่ยงคืน (00:00 น.)
 // ==============================================================
