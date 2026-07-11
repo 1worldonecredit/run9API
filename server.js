@@ -2324,6 +2324,38 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
     }
 });
 
+// ==============================================================
+// 🌟 API P2P (Step 5): ดึงรายละเอียด Order และบัญชีธนาคารของผู้รับงาน
+// ==============================================================
+app.get('/api/p2p/order/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    try {
+        let pool = await sql.connect(config);
+        const orderRes = await pool.request()
+            .input('id', sql.Int, id)
+            .query(`
+                SELECT 
+                    o.*, 
+                    reqU.Username AS RequesterUsername, 
+                    matchU.Username AS MatchedUsername,
+                    b.BankName, b.AccountNumber, b.AccountName, b.BankLogo
+                FROM P2P_Orders o
+                LEFT JOIN UsersRegister reqU ON o.RequesterId = reqU.Id
+                LEFT JOIN UsersRegister matchU ON o.MatchedUserId = matchU.Id
+                -- ดึงบัญชีธนาคารของ "ผู้รับงาน (MatchedUser)" เพื่อให้ผู้ฝากโอนเงินไปให้
+                LEFT JOIN UserBankAccounts b ON matchU.Username = b.Username AND (b.Status = 'Active' OR b.Status = 'APPROVED')
+                WHERE o.Id = @id
+            `);
+            
+        if (orderRes.recordset.length === 0) return res.status(404).json({ success: false, message: "ไม่พบรายการ" });
+        
+        res.json({ success: true, order: orderRes.recordset[0] });
+    } catch (err) {
+        console.error("🔥 Fetch Order Detail Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
