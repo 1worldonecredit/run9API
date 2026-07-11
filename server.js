@@ -2035,7 +2035,6 @@ app.post('/api/p2p/match-order', async (req, res) => {
 
         try {
             // 1. เช็กสถานะงาน (ใช้ UPDLOCK ล็อกแถวนี้ไว้ชั่วคราว ป้องกันการแย่งข้อมูล)
-           try {
             const orderCheck = await transaction.request()
                 .input('oId', sql.Int, orderId)
                 .query(`SELECT Amount, Status, RequesterId, CreatedAt FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
@@ -2055,9 +2054,6 @@ app.post('/api/p2p/match-order', async (req, res) => {
                  throw new Error("คำขอนี้หมดอายุแล้ว (เกิน 5 นาที)");
             }
                 
-            if (orderCheck.recordset.length === 0) throw new Error("ไม่พบรายการนี้ในระบบ");
-            const orderData = orderCheck.recordset[0];
-            
             if (orderData.Status !== 'PENDING') {
                 throw new Error("งานนี้มีผู้ใช้งานอื่นรับไปแล้ว ยังมีงานอื่นรอคุณ ขอบคุณที่ใช้บริการ");
             }
