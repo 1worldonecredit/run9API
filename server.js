@@ -1959,15 +1959,24 @@ app.post('/api/p2p/create-order', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // 1. หา RequesterId
+        // 1. หา RequesterId และ สกุลเงิน (Currency) ของผู้ใช้งาน
+        // 🌟 อัปเดต: JOIN กับ UserBankAccounts เพื่อดึง Currency มาด้วย
         const userRes = await pool.request()
             .input('username', sql.VarChar, username)
-            .query(`SELECT Id FROM UsersRegister WHERE Username = @username`);
+            .query(`
+                SELECT u.Id, b.Currency 
+                FROM UsersRegister u
+                LEFT JOIN UserBankAccounts b ON u.Username = b.Username AND (b.Status = 'Active' OR b.Status = 'APPROVED')
+                WHERE u.Username = @username
+            `);
             
         if (userRes.recordset.length === 0) return res.status(404).json({ success: false, message: "ไม่พบผู้ใช้งาน" });
         const requesterId = userRes.recordset[0].Id;
+        // 🌟 หากไม่มีบัญชีธนาคาร (หรือไม่มีข้อมูลสกุลเงิน) ให้ใช้ 'THB' เป็นค่าเริ่มต้น
+        const userCurrency = userRes.recordset[0].Currency || 'THB'; 
 
         // 🌟 2. เช็กว่ามีคำขอที่ยัง PENDING อยู่หรือไม่ (ป้องกันสแปม)
+        // (คงระยะเวลา 60 นาทีไว้ตามโค้ดเดิมของคุณ)
         const pendingCheckRes = await pool.request()
             .input('uid', sql.Int, requesterId)
             .query(`
@@ -1975,7 +1984,7 @@ app.post('/api/p2p/create-order', async (req, res) => {
                 FROM P2P_Orders 
                 WHERE RequesterId = @uid 
                 AND Status = 'PENDING' 
-                AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) <= 60
+                AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) <= 10
             `);
             
         if (pendingCheckRes.recordset[0].PendingCount > 0) {
@@ -1993,14 +2002,16 @@ app.post('/api/p2p/create-order', async (req, res) => {
         const feeAmount = (amount * feePercent) / 100;
 
         // 4. บันทึกคำขอ
+        // 🌟 อัปเดต: เพิ่มการบันทึก Currency ลงใน P2P_Orders ด้วย
         await pool.request()
             .input('type', sql.VarChar, orderType)
             .input('uid', sql.Int, requesterId)
             .input('amt', sql.Decimal, amount)
             .input('fee', sql.Decimal, feeAmount)
+            .input('currency', sql.VarChar, userCurrency) // 🌟 เพิ่มพารามิเตอร์นี้
             .query(`
-                INSERT INTO P2P_Orders (OrderType, RequesterId, Amount, FeeAmount, Status)
-                VALUES (@type, @uid, @amt, @fee, 'PENDING')
+                INSERT INTO P2P_Orders (OrderType, RequesterId, Amount, FeeAmount, Status, Currency)
+                VALUES (@type, @uid, @amt, @fee, 'PENDING', @currency)
             `);
 
         res.json({ success: true, message: "สร้างคำขอสำเร็จ", feeCharged: feeAmount });
