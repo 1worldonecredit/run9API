@@ -1929,11 +1929,12 @@ app.post('/api/p2p/create-order', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API: ดึงรายการ P2P ที่รอคนรับงาน (แสดงใน Market)
+// 🌟 API: ดึงรายการ P2P ที่รอคนรับงาน (แก้ Error 500 แล้ว)
 // ==============================================================
 app.get('/api/p2p/orders/pending', async (req, res) => {
     try {
         let pool = await sql.connect(config);
+        // 🌟 เอา u.ProfileImageUrl ออก ป้องกัน Error คอลัมน์ไม่มี
         const result = await pool.request().query(`
             SELECT 
                 o.Id, 
@@ -1941,8 +1942,7 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
                 o.Amount, 
                 o.FeeAmount, 
                 o.CreatedAt,
-                u.Username,
-                u.ProfileImageUrl
+                u.Username
             FROM P2P_Orders o
             JOIN UsersRegister u ON o.RequesterId = u.Id
             WHERE o.Status = 'PENDING'
@@ -1951,6 +1951,27 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
         res.json({ success: true, orders: result.recordset });
     } catch (err) {
         console.error("🔥 Fetch P2P Pending Error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 API (ใหม่): ดึงประวัติคำขอ P2P ของตัวเอง (My Orders)
+// ==============================================================
+app.get('/api/p2p/my-orders/:username', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        const result = await pool.request()
+            .input('user', sql.VarChar, req.params.username)
+            .query(`
+                SELECT o.* 
+                FROM P2P_Orders o
+                JOIN UsersRegister u ON o.RequesterId = u.Id
+                WHERE u.Username = @user
+                ORDER BY o.CreatedAt DESC
+            `);
+        res.json({ success: true, orders: result.recordset });
+    } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
