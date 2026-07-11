@@ -1922,6 +1922,117 @@ app.post('/api/p2p/create-order', async (req, res) => {
     }
 });
 
+
+// ==============================================================
+// 🌟 API: ดึงรายการ P2P ที่รอคนรับงาน (แสดงใน Market)
+// ==============================================================
+app.get('/api/p2p/orders/pending', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        const result = await pool.request().query(`
+            SELECT 
+                o.Id, 
+                o.OrderType, 
+                o.Amount, 
+                o.FeeAmount, 
+                o.CreatedAt,
+                u.Username,
+                u.ProfileImageUrl
+            FROM P2P_Orders o
+            JOIN UsersRegister u ON o.RequesterId = u.Id
+            WHERE o.Status = 'PENDING'
+            ORDER BY o.CreatedAt DESC
+        `);
+        res.json({ success: true, orders: result.recordset });
+    } catch (err) {
+        console.error("🔥 Fetch P2P Pending Error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 API: กดรับงาน P2P (หักเงิน Escrow + สร้างรหัสยืนยัน)
+// ==============================================================
+app.post('/api/p2p/match-order', async (req, res) => {
+    const { orderId, matchedUsername } = req.body;
+
+    try {
+        let pool = await sql.connect(config);
+        
+        // หา UserId ของคนที่กดรับงานก่อน
+        const userRes = await pool.request()
+            .input('user', sql.VarChar, matchedUsername)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @user`);
+            
+        if (userRes.recordset.length === 0) return res.status(404).json({ error: "ไม่พบผู้ใช้งานรับงาน" });
+        const matchedUserId = userRes.recordset[0].Id;
+
+        // 🌟 เริ่ม Transaction (ป้องกันคนกดพร้อมกัน แย่งงานกัน)
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            // 1. เช็กสถานะงาน (ใช้ UPDLOCK ล็อกแถวนี้ไว้ชั่วคราว ป้องกันการแย่งข้อมูล)
+            const orderCheck = await transaction.request()
+                .input('oId', sql.Int, orderId)
+                .query(`SELECT Amount, Status, RequesterId FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
+                
+            if (orderCheck.recordset.length === 0) throw new Error("ไม่พบรายการนี้ในระบบ");
+            const orderData = orderCheck.recordset[0];
+            
+            if (orderData.Status !== 'PENDING') {
+                throw new Error("งานนี้มีผู้ใช้งานอื่นรับไปแล้ว ยังมีงานอื่นรอคุณ ขอบคุณที่ใช้บริการ");
+            }
+
+            if (orderData.RequesterId === matchedUserId) {
+                throw new Error("คุณไม่สามารถรับงานของตัวเองได้");
+            }
+
+            // 2. เช็กยอดเงินในกระเป๋าของคนที่กดรับงาน
+            const walletCheck = await transaction.request()
+                .input('uid', sql.Int, matchedUserId)
+                .query(`SELECT Balance FROM Wallets WHERE UserId = @uid`);
+                
+            const balance = walletCheck.recordset.length > 0 ? walletCheck.recordset[0].Balance : 0;
+            if (balance < orderData.Amount) {
+                throw new Error("ยอดเงินในกระเป๋าของคุณไม่เพียงพอสำหรับการรับงานนี้");
+            }
+
+            // 3. 💸 หักเงินเข้าสู่ระบบ Escrow (ลบเงินจากกระเป๋าคนรับงาน)
+            await transaction.request()
+                .input('uid', sql.Int, matchedUserId)
+                .input('amt', sql.Decimal(18,4), orderData.Amount)
+                .query(`UPDATE Wallets SET Balance = Balance - @amt WHERE UserId = @uid`);
+
+            // 4. 🔑 สร้างรหัสยืนยัน 6 หลักสุ่ม (เช่น X7B9Q2)
+            const confirmationCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+            // 5. อัปเดตสถานะงานเป็น MATCHED
+            await transaction.request()
+                .input('oId', sql.Int, orderId)
+                .input('mId', sql.Int, matchedUserId)
+                .input('code', sql.VarChar, confirmationCode)
+                .query(`
+                    UPDATE P2P_Orders 
+                    SET Status = 'MATCHED', MatchedUserId = @mId, ConfirmationCode = @code, MatchedAt = GETDATE()
+                    WHERE Id = @oId
+                `);
+
+            // (ถ้ามีระบบ Notification สามารถแทรกคำสั่ง INSERT แจ้งเตือนผู้ฝากเงินได้ที่นี่)
+
+            await transaction.commit();
+            res.json({ success: true, message: "รับงานสำเร็จ! กรุณารอผู้ฝากโอนเงิน", confirmationCode: confirmationCode });
+
+        } catch (err) {
+            await transaction.rollback();
+            throw err; // ส่ง error ออกไปให้ catch ตัวนอก
+        }
+
+    } catch (err) {
+        res.status(400).json({ success: false, message: err.message });
+    }
+});
+
  
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
