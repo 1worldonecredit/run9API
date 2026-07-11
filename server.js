@@ -2357,6 +2357,41 @@ app.get('/api/p2p/order/:id', async (req, res) => {
     }
 });
 
+// ==============================================================
+// 🌟 API P2P: ดึงรายการ P2P ของฉัน (My Orders)
+// ==============================================================
+app.get('/api/p2p/my-orders/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        
+        // 1. หา UserId ก่อน
+        const userRes = await pool.request()
+            .input('user', sql.VarChar, username)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @user`);
+            
+        if (userRes.recordset.length === 0) return res.status(404).json({error: 'ไม่พบผู้ใช้งาน'});
+        const userId = userRes.recordset[0].Id;
+
+        // 2. ดึงรายการที่ตัวเองเป็น Requester (คนฝาก) หรือ MatchedUser (คนรับงาน)
+        const ordersRes = await pool.request()
+            .input('uid', sql.Int, userId)
+            .query(`
+                SELECT 
+                    Id, OrderType, Amount, Status, CreatedAt, Currency,
+                    CASE WHEN RequesterId = @uid THEN 'REQUESTER' ELSE 'MATCHER' END as MyRole
+                FROM P2P_Orders
+                WHERE RequesterId = @uid OR MatchedUserId = @uid
+                ORDER BY CreatedAt DESC
+            `);
+            
+        res.json({ success: true, orders: ordersRes.recordset });
+    } catch (err) {
+        console.error("🔥 Fetch My Orders Error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
