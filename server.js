@@ -2118,7 +2118,7 @@ app.post('/api/p2p/match-order', async (req, res) => {
             // 🌟 ตรวจสอบว่าเกิน 5 นาทีหรือยังตอนที่กดรับ
             const orderTime = new Date(orderData.CreatedAt);
             const now = new Date();
-            const diffMinutes = Math.floor((now - orderTime) / (1000 * 60));
+            const diffMinutes = Math.floor((now - orderTime) / (100 * 60));
             
             if (diffMinutes > 5) {
                  await transaction.request()
