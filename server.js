@@ -1975,7 +1975,7 @@ app.post('/api/p2p/create-order', async (req, res) => {
                 FROM P2P_Orders 
                 WHERE RequesterId = @uid 
                 AND Status = 'PENDING' 
-                AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) <= 5
+                AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) <= 60
             `);
             
         if (pendingCheckRes.recordset[0].PendingCount > 0) {
