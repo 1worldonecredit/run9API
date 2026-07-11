@@ -1153,35 +1153,85 @@ app.get('/api/user/profile-stats', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 2. API: บันทึกข้อมูล Profile และรูปภาพ (Base64)
+// 🌟 API: อัปเดตข้อมูลส่วนตัว (รูปโปรไฟล์, เบอร์โทร และ ชื่อ-นามสกุล)
 // ==============================================================
 app.post('/api/user/update-profile', async (req, res) => {
     const { username, imageBase64, firstName, lastName, phone } = req.body;
+
+    if (!username) return res.status(400).json({ error: "ระบุผู้ใช้งาน" });
+
     try {
         let pool = await sql.connect(config);
         
-        // เช็คว่ามีโปรไฟล์หรือยัง
-        const checkRes = await pool.request().input('user', sql.VarChar, username).query(`SELECT Id FROM UserProfiles WHERE Username = @user`);
-        
-        if (checkRes.recordset.length > 0) {
-            await pool.request()
+        // 🌟 เริ่ม Transaction เพื่อให้มั่นใจว่าข้อมูลบันทึกลงทั้ง 2 ตารางอย่างปลอดภัย
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            // -----------------------------------------------------
+            // 1. จัดการตาราง UserProfiles (บันทึก รูปภาพ และ เบอร์โทร)
+            // -----------------------------------------------------
+            const profileCheck = await transaction.request()
                 .input('user', sql.VarChar, username)
-                .input('img', sql.VarChar(sql.MAX), imageBase64)
-                .input('fname', sql.NVarChar, firstName)
-                .input('lname', sql.NVarChar, lastName)
-                .input('phone', sql.VarChar, phone)
-                .query(`UPDATE UserProfiles SET ProfileImageUrl = ISNULL(@img, ProfileImageUrl), FirstName = @fname, LastName = @lname, PhoneNumber = @phone WHERE Username = @user`);
-        } else {
-            await pool.request()
-                .input('user', sql.VarChar, username)
-                .input('img', sql.VarChar(sql.MAX), imageBase64)
-                .input('fname', sql.NVarChar, firstName)
-                .input('lname', sql.NVarChar, lastName)
-                .input('phone', sql.VarChar, phone)
-                .query(`INSERT INTO UserProfiles (Username, ProfileImageUrl, FirstName, LastName, PhoneNumber, Status) VALUES (@user, @img, @fname, @lname, @phone, 'Active')`);
+                .query(`SELECT Id FROM UserProfiles WHERE Username = @user`);
+
+            if (profileCheck.recordset.length > 0) {
+                // มีข้อมูลแล้ว ให้อัปเดต (ถ้าอันไหนไม่ได้ส่งมา ให้คงค่าเดิมไว้ด้วย ISNULL)
+                await transaction.request()
+                    .input('user', sql.VarChar, username)
+                    .input('img', sql.NVarChar(sql.MAX), imageBase64 || null)
+                    .input('phone', sql.VarChar, phone || null)
+                    .query(`
+                        UPDATE UserProfiles 
+                        SET 
+                            ProfileImageUrl = ISNULL(@img, ProfileImageUrl), 
+                            PhoneNumber = ISNULL(@phone, PhoneNumber) 
+                        WHERE Username = @user
+                    `);
+            } else {
+                // ยังไม่มี ให้เพิ่มใหม่
+                await transaction.request()
+                    .input('user', sql.VarChar, username)
+                    .input('img', sql.NVarChar(sql.MAX), imageBase64 || '')
+                    .input('phone', sql.VarChar, phone || '')
+                    .query(`INSERT INTO UserProfiles (Username, ProfileImageUrl, PhoneNumber) VALUES (@user, @img, @phone)`);
+            }
+
+            // -----------------------------------------------------
+            // 2. จัดการตาราง UserNames (บันทึก ชื่อ-นามสกุล และบังคับ Status = 'Active')
+            // -----------------------------------------------------
+            if (firstName !== undefined && lastName !== undefined) {
+                const nameCheck = await transaction.request()
+                    .input('user', sql.VarChar, username)
+                    .query(`SELECT Id FROM UserNames WHERE Username = @user`);
+
+                if (nameCheck.recordset.length > 0) {
+                    // มีข้อมูลแล้ว ให้อัปเดตและบังคับ Active
+                    await transaction.request()
+                        .input('user', sql.VarChar, username)
+                        .input('fname', sql.NVarChar, firstName)
+                        .input('lname', sql.NVarChar, lastName)
+                        .query(`UPDATE UserNames SET FirstName = @fname, LastName = @lname, Status = 'Active' WHERE Username = @user`);
+                } else {
+                    // ยังไม่มี ให้เพิ่มใหม่และบังคับ Active
+                    await transaction.request()
+                        .input('user', sql.VarChar, username)
+                        .input('fname', sql.NVarChar, firstName)
+                        .input('lname', sql.NVarChar, lastName)
+                        .query(`INSERT INTO UserNames (Username, FirstName, LastName, Status, CreatedAt) VALUES (@user, @fname, @lname, 'Active', GETDATE())`);
+                }
+            }
+
+            await transaction.commit();
+            res.json({ success: true, message: "บันทึกข้อมูลส่วนตัวสำเร็จ" });
+
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
         }
-        res.json({ success: true, message: "บันทึกข้อมูลส่วนตัวสำเร็จ!" });
+
     } catch (err) {
+        console.error("🔥 Update Profile Error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
