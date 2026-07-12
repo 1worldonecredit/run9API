@@ -2022,21 +2022,19 @@ app.post('/api/p2p/create-order', async (req, res) => {
 });
 
 app.get('/api/p2p/orders/pending', async (req, res) => {
-    // รับค่าประเทศจากหน้าเว็บ Market (ที่เราเพิ่งแก้ไปก่อนหน้านี้)
     const { country } = req.query; 
     
     try {
         let pool = await sql.connect(config);
 
-        // 🌟 1. ระบบ Auto-Cancel: อัปเดตงานที่ปล่อยทิ้งไว้เกิน 5 นาที ให้เป็น 'CANCELLED' ทันที
-        // (ทำตรงนี้เลยจะได้ไม่ต้องใช้ Cron Job ให้ยุ่งยาก เพราะงาน PENDING ยังไม่มีการหักเงิน)
+        // 1. ยกเลิกงานที่เกิน 5 นาที
         await pool.request().query(`
             UPDATE P2P_Orders 
             SET Status = 'CANCELLED', UpdatedAt = GETDATE()
             WHERE Status = 'PENDING' AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) > 5
         `);
 
-        // 🌟 2. ดึงข้อมูลที่ยังไม่หมดเวลา และตรงกับประเทศของผู้รับงาน
+        // 2. ดึงข้อมูล 
         let queryStr = `
             SELECT 
                 o.Id, 
@@ -2044,24 +2042,25 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
                 o.Amount, 
                 o.FeeAmount, 
                 o.CreatedAt,
-                u.Username,
-                u.ProfileImageUrl
+                o.Username
             FROM P2P_Orders o
-            JOIN UsersRegister u ON o.RequesterId = u.Id
+            -- 🌟 แก้ไขตรงนี้: เปลี่ยนจากการเชื่อมด้วย Id เป็นการเชื่อมด้วย Username ให้ตรงกับโครงสร้างจริง
+            JOIN UsersRegister u ON o.Username = u.Username 
             WHERE o.Status = 'PENDING'
-            -- มั่นใจได้ว่าข้อมูลที่ดึงมาจะไม่เกิน 5 นาทีแน่นอน เพราะเราเพิ่งอัปเดตพวกที่เกินไปเมื่อกี้
         `;
 
-        // ถ้ามีการส่งข้อมูลประเทศมา ให้ดึงเฉพาะงานที่ตรงกับประเทศนั้น
+        const request = pool.request(); 
+
+        // 3. ตรวจสอบเงื่อนไขประเทศ
         if (country) {
+            // 🌟 เช็กให้ชัวร์ว่าคอลัมน์ประเทศในฐานข้อมูลคุณชื่อ Country (ตัว C พิมพ์ใหญ่)
             queryStr += ` AND u.Country = @country `; 
+            request.input('country', sql.NVarChar, country); 
         }
 
         queryStr += ` ORDER BY o.CreatedAt DESC`;
 
-        const result = await pool.request()
-            .input('country', sql.NVarChar, country)
-            .query(queryStr);
+        const result = await request.query(queryStr);
 
         res.json({ success: true, orders: result.recordset });
     } catch (err) {
