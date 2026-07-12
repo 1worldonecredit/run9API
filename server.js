@@ -2021,31 +2021,52 @@ app.post('/api/p2p/create-order', async (req, res) => {
     }
 });
 
-
-// ==============================================================
-// 🌟 API: ดึงรายการที่รอคนรับงาน (กรองเฉพาะที่ไม่เกิน 5 นาที)
-// ==============================================================
 app.get('/api/p2p/orders/pending', async (req, res) => {
+    // รับค่าประเทศจากหน้าเว็บ Market (ที่เราเพิ่งแก้ไปก่อนหน้านี้)
+    const { country } = req.query; 
+    
     try {
         let pool = await sql.connect(config);
-        const result = await pool.request().query(`
+
+        // 🌟 1. ระบบ Auto-Cancel: อัปเดตงานที่ปล่อยทิ้งไว้เกิน 5 นาที ให้เป็น 'CANCELLED' ทันที
+        // (ทำตรงนี้เลยจะได้ไม่ต้องใช้ Cron Job ให้ยุ่งยาก เพราะงาน PENDING ยังไม่มีการหักเงิน)
+        await pool.request().query(`
+            UPDATE P2P_Orders 
+            SET Status = 'CANCELLED', UpdatedAt = GETDATE()
+            WHERE Status = 'PENDING' AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) > 5
+        `);
+
+        // 🌟 2. ดึงข้อมูลที่ยังไม่หมดเวลา และตรงกับประเทศของผู้รับงาน
+        let queryStr = `
             SELECT 
                 o.Id, 
                 o.OrderType, 
                 o.Amount, 
                 o.FeeAmount, 
                 o.CreatedAt,
-                u.Username
+                u.Username,
+                u.ProfileImageUrl
             FROM P2P_Orders o
             JOIN UsersRegister u ON o.RequesterId = u.Id
             WHERE o.Status = 'PENDING'
-            -- 🌟 ซ่อนงานที่เกิน 5 นาที
-            AND DATEDIFF(MINUTE, o.CreatedAt, GETDATE()) <= 5
-            ORDER BY o.CreatedAt DESC
-        `);
+            -- มั่นใจได้ว่าข้อมูลที่ดึงมาจะไม่เกิน 5 นาทีแน่นอน เพราะเราเพิ่งอัปเดตพวกที่เกินไปเมื่อกี้
+        `;
+
+        // ถ้ามีการส่งข้อมูลประเทศมา ให้ดึงเฉพาะงานที่ตรงกับประเทศนั้น
+        if (country) {
+            queryStr += ` AND u.Country = @country `; 
+        }
+
+        queryStr += ` ORDER BY o.CreatedAt DESC`;
+
+        const result = await pool.request()
+            .input('country', sql.NVarChar, country)
+            .query(queryStr);
+
         res.json({ success: true, orders: result.recordset });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("Fetch Pending Orders Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 // ==============================================================
