@@ -2048,24 +2048,31 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
     }
 });
 
-// ==============================================================
-// 🌟 API (ใหม่): ดึงประวัติคำขอ P2P ของตัวเอง (My Orders)
+/// ==============================================================
+// 🌟 API: ดึงประวัติรายการ P2P ของฉัน (ทั้งฝั่งคนฝาก และ คนรับงาน)
 // ==============================================================
 app.get('/api/p2p/my-orders/:username', async (req, res) => {
+    const { username } = req.params;
     try {
         let pool = await sql.connect(config);
-        const result = await pool.request()
-            .input('user', sql.VarChar, req.params.username)
-            .query(`
-                SELECT o.* 
-                FROM P2P_Orders o
-                JOIN UsersRegister u ON o.RequesterId = u.Id
-                WHERE u.Username = @user
-                ORDER BY o.CreatedAt DESC
-            `);
+        const request = pool.request();
+        
+        // รับค่า username ที่ส่งมาจากหน้าบ้าน
+        request.input('user', sql.NVarChar, username);
+
+        // 🌟 จุดที่แก้ไข: สั่งให้ฐานข้อมูลหาทั้ง Username (คนฝาก) หรือ MatchedUsername (คนรับงาน)
+        const queryStr = `
+            SELECT * FROM P2P_Orders 
+            WHERE Username = @user OR MatchedUsername = @user 
+            ORDER BY CreatedAt DESC
+        `;
+        
+        const result = await request.query(queryStr);
         res.json({ success: true, orders: result.recordset });
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("🔥 Error fetching my orders:", err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
