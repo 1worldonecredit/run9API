@@ -2021,53 +2021,50 @@ app.post('/api/p2p/create-order', async (req, res) => {
     }
 });
 
-
 app.get('/api/p2p/orders/pending', async (req, res) => {
     const { country } = req.query; 
     
     try {
         let pool = await sql.connect(config);
+        const request = pool.request(); // เตรียม request ไว้
 
-        // 1. ระบบตัดงานที่หมดเวลา (เกิน 5 นาที)
+        // 🌟 1. ระบบตัดงานที่หมดเวลา (ลบ UpdatedAt ออกเพื่อความปลอดภัย ป้องกัน Error คอลัมน์ไม่มี)
         await pool.request().query(`
             UPDATE P2P_Orders 
-            SET Status = 'CANCELLED', UpdatedAt = GETDATE()
+            SET Status = 'CANCELLED'
             WHERE Status = 'PENDING' AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) > 5
         `);
 
-        // 2. ดึงข้อมูล (🌟 กลับมาใช้ RequesterId เชื่อมตาราง ตามโครงสร้างเดิมที่ถูกต้อง)
+        // 🌟 2. ดึงข้อมูลแบบปลอดภัย (ไม่ใช้ JOIN เพื่อตัดปัญหาชื่อคอลัมน์ไม่ตรง)
         let queryStr = `
             SELECT 
-                o.Id, 
-                o.OrderType, 
-                o.Amount, 
-                o.FeeAmount, 
-                o.CreatedAt,
-                u.Username
-            FROM P2P_Orders o
-            JOIN UsersRegister u ON o.RequesterId = u.Id
-            WHERE o.Status = 'PENDING'
+                Id, 
+                OrderType, 
+                Amount, 
+                FeeAmount, 
+                CreatedAt,
+                Username
+            FROM P2P_Orders 
+            WHERE Status = 'PENDING'
         `;
 
-        const request = pool.request(); 
-
-        // 3. กรองตามประเทศของผู้ใช้งาน
+        // 🌟 3. กรองตามประเทศด้วย Sub-query (ปลอดภัยและแม่นยำกว่า)
         if (country) {
-            queryStr += ` AND u.Country = @country `; 
+            queryStr += ` AND Username IN (SELECT Username FROM UsersRegister WHERE Country = @country) `; 
             request.input('country', sql.NVarChar, country); 
         }
 
-        queryStr += ` ORDER BY o.CreatedAt DESC`;
+        queryStr += ` ORDER BY CreatedAt DESC`;
 
         const result = await request.query(queryStr);
 
         res.json({ success: true, orders: result.recordset });
     } catch (err) {
-        console.error("Fetch Pending Orders Error:", err.message);
+        // พิมพ์ Error ออกมาให้เห็นชัดๆ ใน Console ของฝั่งเซิร์ฟเวอร์
+        console.error("🔥 Fetch Pending Orders Error:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 });
-
 
 // ==============================================================
 // 🌟 API (ใหม่): ดึงประวัติคำขอ P2P ของตัวเอง (My Orders)
