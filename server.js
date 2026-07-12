@@ -2247,6 +2247,9 @@ app.post('/api/p2p/upload-slip', async (req, res) => {
 // ==============================================================
 // 🌟 API P2P: ผู้รับงานยืนยันได้รับเงิน (กระจายเงิน + จ่าย 5% + สร้างประวัติ)
 // ==============================================================
+// ==============================================================
+// 🌟 API P2P: ผู้รับงานยืนยันได้รับเงิน (กระจายเงิน + จ่าย 5% + สร้างประวัติ)
+// ==============================================================
 app.post('/api/p2p/confirm-receipt', async (req, res) => {
     const { orderId } = req.body;
     let pool = await sql.connect(config);
@@ -2262,7 +2265,7 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
             .query(`SELECT * FROM P2P_Orders WHERE Id = @id AND Status = 'SLIP_UPLOADED'`);
             
         if (orderRes.recordset.length === 0) {
-            throw new Error("ไม่พบรายการ หรือสถานะไม่ถูกต้อง");
+            throw new Error("ไม่พบรายการ หรือสถานะไม่ถูกต้อง (อาจมีการอนุมัติไปแล้ว)");
         }
         
         const order = orderRes.recordset[0];
@@ -2284,15 +2287,15 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
             .input('fee', sql.Decimal(18, 2), feeAmount)
             .query(`UPDATE UsersRegister SET WalletBalance = ISNULL(WalletBalance, 0) + @fee WHERE Username = @matchUser`);
 
-        // 4. บันทึก Transaction ฝั่งผู้ฝาก (รับเงินเข้า)
+        // 4. บันทึก Transaction ฝั่งผู้ฝาก (รับเงินเข้า) 🌟 ตัวใหม่ใช้ _DEP
         await request
-            .input('reqDesc', sql.NVarChar, `เติมเงินผ่าน P2P สำเร็จ (รหัสผู้รับงาน: ${matcherUsername})`)
+            .input('reqDesc', sql.NVarChar, `เติมเงินผ่าน P2P สำเร็จ (รหัสรับงาน: ${matcherUsername})`)
             .query(`
                 INSERT INTO Transactions (Username, Type, Amount, Status, Description, ReferenceCode, CreatedAt) 
-                VALUES (@reqUser, 'DEPOSIT', @amount, 'COMPLETED', @reqDesc, '${refCode}', GETDATE())
+                VALUES (@reqUser, 'DEPOSIT', @amount, 'COMPLETED', @reqDesc, '${refCode}_DEP', GETDATE())
             `);
 
-        // 5. บันทึก Transaction ฝั่งผู้รับงาน (รับค่าธรรมเนียม)
+        // 5. บันทึก Transaction ฝั่งผู้รับงาน (รับค่าธรรมเนียม) 🌟 ตัวใหม่ใช้ _FEE
         await request
             .input('matchDesc', sql.NVarChar, `รายได้ค่าธรรมเนียมรับงาน P2P (รหัสคำขอ: ${orderId})`)
             .query(`
@@ -2303,22 +2306,20 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         // ==========================================================
         // 🌟 6. ระบบคำนวณและจ่าย Affiliate 5% ให้ผู้แนะนำของผู้รับงาน
         // ==========================================================
-        const affiliateFee = feeAmount * 0.05; // คำนวณ 5% จากค่าธรรมเนียม
+        const affiliateFee = feeAmount * 0.05;
 
-        // หาผู้แนะนำของผู้รับงาน (สมมติว่าคอลัมน์ชื่อ ReferrerUsername)
         const referrerRes = await request
             .query(`SELECT ReferrerUsername FROM UsersRegister WHERE Username = @matchUser`);
             
         if (referrerRes.recordset.length > 0 && referrerRes.recordset[0].ReferrerUsername) {
             const referrerUsername = referrerRes.recordset[0].ReferrerUsername;
 
-            // เพิ่มเงินให้ผู้แนะนำ
             await request
                 .input('affUser', sql.NVarChar, referrerUsername)
                 .input('affFee', sql.Decimal(18, 2), affiliateFee)
                 .query(`UPDATE UsersRegister SET WalletBalance = ISNULL(WalletBalance, 0) + @affFee WHERE Username = @affUser`);
 
-            // บันทึก Transaction ให้ผู้แนะนำ
+            // 🌟 ตัวใหม่ใช้ _AFF
             await request
                 .input('affDesc', sql.NVarChar, `ค่านายหน้า 5% จากทีมงาน (P2P Fee จาก ${matcherUsername})`)
                 .query(`
@@ -2331,12 +2332,10 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         await request
             .query(`UPDATE P2P_Orders SET Status = 'COMPLETED', UpdatedAt = GETDATE() WHERE Id = @id`);
 
-        // ยืนยันการทำธุรกรรมทั้งหมด
         await transaction.commit();
         res.json({ success: true, message: "กระทบยอดและกระจายรายได้สำเร็จเรียบร้อย" });
 
     } catch (err) {
-        // ถ้ามีข้อผิดพลาดแม้แต่จุดเดียว ให้ย้อนกลับ (Rollback) ไม่มีการหักหรือเพิ่มเงินใดๆ
         await transaction.rollback();
         console.error("🔥 Error in P2P Confirm Receipt:", err.message);
         res.status(500).json({ success: false, error: "เกิดข้อผิดพลาดในการกระจายเงิน: " + err.message });
