@@ -2325,11 +2325,10 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API P2P: ดึงรายละเอียด Order 1 รายการ (พร้อมบัญชีผู้รับงาน)
+// 🌟 API P2P: ดึงรายละเอียด Order 1 รายการ (สำหรับหน้า P2POrderDetail)
 // ==============================================================
 app.get('/api/p2p/order/:id', async (req, res) => {
     const { id } = req.params;
-    
     try {
         let pool = await sql.connect(config);
         const orderRes = await pool.request()
@@ -2343,7 +2342,6 @@ app.get('/api/p2p/order/:id', async (req, res) => {
                 FROM P2P_Orders o
                 LEFT JOIN UsersRegister reqU ON o.RequesterId = reqU.Id
                 LEFT JOIN UsersRegister matchU ON o.MatchedUserId = matchU.Id
-                -- 🌟 ตรงนี้สำคัญ: ดึงบัญชีของผู้รับงานมาให้คนฝากโอนเงิน
                 LEFT JOIN UserBankAccounts b ON matchU.Username = b.Username AND (b.Status = 'Active' OR b.Status = 'APPROVED')
                 WHERE o.Id = @id
             `);
