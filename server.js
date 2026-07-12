@@ -2223,104 +2223,102 @@ app.post('/api/p2p/upload-slip', async (req, res) => {
 // ==============================================================
 // 🌟 API P2P (Step 4): ผู้รับงานยืนยันได้รับยอดเงิน (จบงาน + จ่าย Affiliate 5%)
 // ==============================================================
+// ==============================================================
+// 🌟 API P2P: ผู้รับงานยืนยันได้รับเงิน (กระจายเงิน + จ่าย 5% + สร้างประวัติ)
+// ==============================================================
 app.post('/api/p2p/confirm-receipt', async (req, res) => {
     const { orderId } = req.body;
+    let pool = await sql.connect(config);
+    const transaction = new sql.Transaction(pool);
 
     try {
-        let pool = await sql.connect(config);
-        const transaction = new sql.Transaction(pool);
         await transaction.begin();
+        const request = new sql.Request(transaction);
+        
+        // 1. ดึงข้อมูลออเดอร์
+        const orderRes = await request
+            .input('id', sql.Int, orderId)
+            .query(`SELECT * FROM P2P_Orders WHERE Id = @id AND Status = 'SLIP_UPLOADED'`);
+            
+        if (orderRes.recordset.length === 0) {
+            throw new Error("ไม่พบรายการ หรือสถานะไม่ถูกต้อง");
+        }
+        
+        const order = orderRes.recordset[0];
+        const requesterUsername = order.Username; // ผู้ต้องการเติมเงิน
+        const matcherUsername = order.MatchedUsername; // ผู้รับงาน
+        const amount = order.Amount; // ยอดเติม
+        const feeAmount = order.FeeAmount; // ค่าธรรมเนียมผู้รับงาน
+        const refCode = `P2P-${orderId}`; // รหัสอ้างอิง Transaction
 
-        try {
-            // 1. เช็กข้อมูล Order
-            const orderRes = await transaction.request()
-                .input('oId', sql.Int, orderId)
-                .query(`SELECT Amount, FeeAmount, RequesterId, MatchedUserId, Status FROM P2P_Orders WITH (UPDLOCK) WHERE Id = @oId`);
-                
-            if (orderRes.recordset.length === 0) throw new Error("ไม่พบรายการนี้");
-            const orderData = orderRes.recordset[0];
+        // 2. โอนเงินที่กักไว้ (Escrow) เข้ากระเป๋าผู้ฝากเงิน (Requester)
+        await request
+            .input('reqUser', sql.NVarChar, requesterUsername)
+            .input('amount', sql.Decimal(18, 2), amount)
+            .query(`UPDATE UsersRegister SET WalletBalance = ISNULL(WalletBalance, 0) + @amount WHERE Username = @reqUser`);
 
-            // (เอาคอมเมนต์เช็ก SLIP_UPLOADED ออกชั่วคราวได้ ถ้าระบบเทสต์ยังไม่ได้ทำหน้าอัปสลิป)
-            // if (orderData.Status !== 'SLIP_UPLOADED') throw new Error("สถานะรายการไม่ถูกต้อง (ต้องอัปโหลดสลิปก่อน)");
+        // 3. จ่ายค่าธรรมเนียมให้ผู้รับงาน (Matcher) เข้ากระเป๋า
+        await request
+            .input('matchUser', sql.NVarChar, matcherUsername)
+            .input('fee', sql.Decimal(18, 2), feeAmount)
+            .query(`UPDATE UsersRegister SET WalletBalance = ISNULL(WalletBalance, 0) + @fee WHERE Username = @matchUser`);
 
-            // 2. 🔍 หาว่า "ผู้รับงาน" มี "ผู้แนะนำ" (Referrer) หรือไม่
-            const referrerRes = await transaction.request()
-                .input('mId', sql.Int, orderData.MatchedUserId)
+        // 4. บันทึก Transaction ฝั่งผู้ฝาก (รับเงินเข้า)
+        await request
+            .input('reqDesc', sql.NVarChar, `เติมเงินผ่าน P2P สำเร็จ (รหัสผู้รับงาน: ${matcherUsername})`)
+            .query(`
+                INSERT INTO Transactions (Username, Type, Amount, Status, Description, ReferenceCode, CreatedAt) 
+                VALUES (@reqUser, 'DEPOSIT', @amount, 'COMPLETED', @reqDesc, '${refCode}', GETDATE())
+            `);
+
+        // 5. บันทึก Transaction ฝั่งผู้รับงาน (รับค่าธรรมเนียม)
+        await request
+            .input('matchDesc', sql.NVarChar, `รายได้ค่าธรรมเนียมรับงาน P2P (รหัสคำขอ: ${orderId})`)
+            .query(`
+                INSERT INTO Transactions (Username, Type, Amount, Status, Description, ReferenceCode, CreatedAt) 
+                VALUES (@matchUser, 'P2P_FEE', @fee, 'COMPLETED', @matchDesc, '${refCode}_FEE', GETDATE())
+            `);
+
+        // ==========================================================
+        // 🌟 6. ระบบคำนวณและจ่าย Affiliate 5% ให้ผู้แนะนำของผู้รับงาน
+        // ==========================================================
+        const affiliateFee = feeAmount * 0.05; // คำนวณ 5% จากค่าธรรมเนียม
+
+        // หาผู้แนะนำของผู้รับงาน (สมมติว่าคอลัมน์ชื่อ ReferrerUsername)
+        const referrerRes = await request
+            .query(`SELECT ReferrerUsername FROM UsersRegister WHERE Username = @matchUser`);
+            
+        if (referrerRes.recordset.length > 0 && referrerRes.recordset[0].ReferrerUsername) {
+            const referrerUsername = referrerRes.recordset[0].ReferrerUsername;
+
+            // เพิ่มเงินให้ผู้แนะนำ
+            await request
+                .input('affUser', sql.NVarChar, referrerUsername)
+                .input('affFee', sql.Decimal(18, 2), affiliateFee)
+                .query(`UPDATE UsersRegister SET WalletBalance = ISNULL(WalletBalance, 0) + @affFee WHERE Username = @affUser`);
+
+            // บันทึก Transaction ให้ผู้แนะนำ
+            await request
+                .input('affDesc', sql.NVarChar, `ค่านายหน้า 5% จากทีมงาน (P2P Fee จาก ${matcherUsername})`)
                 .query(`
-                    SELECT r.Id, r.Username 
-                    FROM UsersRegister u
-                    JOIN UsersRegister r ON u.ReferralUsername = r.Username
-                    WHERE u.Id = @mId
+                    INSERT INTO Transactions (Username, Type, Amount, Status, Description, ReferenceCode, CreatedAt) 
+                    VALUES (@affUser, 'AFFILIATE_COMMISSION', @affFee, 'COMPLETED', @affDesc, '${refCode}_AFF', GETDATE())
                 `);
-            const referrerId = referrerRes.recordset.length > 0 ? referrerRes.recordset[0].Id : null;
-
-            // 3. 🧮 คำนวณค่าคอมมิชชั่น (5% ของ FeeAmount ที่ผู้รับงานได้เป็นเงินสดไปแล้ว)
-            const affiliateBonus = orderData.FeeAmount * 0.05;
-
-            // 4. 💸 อัปเดตกระเป๋าเงิน (Wallets)
-            // 4.1 เติมเงินให้ "ผู้ฝากเงิน" (ตามที่ขอฝากเข้ามา)
-            await transaction.request()
-                .input('reqId', sql.Int, orderData.RequesterId)
-                .input('amt', sql.Decimal(18,4), orderData.Amount)
-                .query(`UPDATE Wallets SET Balance = Balance + @amt WHERE UserId = @reqId`);
-
-            // 4.2 เติมเงินให้ "ผู้แนะนำ" (ถ้ามี)
-            if (referrerId) {
-                await transaction.request()
-                    .input('refId', sql.Int, referrerId)
-                    .input('bonus', sql.Decimal(18,4), affiliateBonus)
-                    .query(`UPDATE Wallets SET Balance = Balance + @bonus WHERE UserId = @refId`);
-            }
-
-            // 5. ปิดงาน เปลี่ยน Status P2P
-            await transaction.request()
-                .input('oId', sql.Int, orderId)
-                .query(`UPDATE P2P_Orders SET Status = 'COMPLETED' WHERE Id = @oId`);
-
-            // 6. 📝 สร้างประวัติการทำรายการ (WalletTransactions) ให้ทั้ง 3 ฝ่าย
-            // 6.1 ประวัติของ "ผู้ฝากเงิน" (DEPOSIT: รับเงินสำเร็จ)
-            await transaction.request()
-                .input('reqId', sql.Int, orderData.RequesterId)
-                .input('amt', sql.Decimal(18,4), orderData.Amount)
-                .input('refId', sql.Int, orderId)
-                .query(`
-                    INSERT INTO WalletTransactions (UserId, Amount, TransactionType, Status, ReferenceId, CreatedAt)
-                    VALUES (@reqId, @amt, 'DEPOSIT', 'COMPLETED', @refId, GETDATE())
-                `);
-
-            // 6.2 ประวัติของ "ผู้รับงาน" (P2P_TRANSFER_OUT: โอนเงินค้ำประกันออกจากระบบไปให้ผู้ฝาก)
-            await transaction.request()
-                .input('mId', sql.Int, orderData.MatchedUserId)
-                .input('amt', sql.Decimal(18,4), orderData.Amount)
-                .input('refId', sql.Int, orderId)
-                .query(`
-                    INSERT INTO WalletTransactions (UserId, Amount, TransactionType, Status, ReferenceId, CreatedAt)
-                    VALUES (@mId, @amt, 'P2P_TRANSFER_OUT', 'COMPLETED', @refId, GETDATE())
-                `);
-
-            // 6.3 ประวัติของ "ผู้แนะนำ" (AFFILIATE_P2P: ได้รับค่าคอมมิชชั่น 5%)
-            if (referrerId) {
-                await transaction.request()
-                    .input('refId', sql.Int, referrerId)
-                    .input('bonus', sql.Decimal(18,4), affiliateBonus)
-                    .input('refId2', sql.Int, orderId)
-                    .query(`
-                        INSERT INTO WalletTransactions (UserId, Amount, TransactionType, Status, ReferenceId, CreatedAt)
-                        VALUES (@refId, @bonus, 'AFFILIATE_P2P', 'COMPLETED', @refId2, GETDATE())
-                    `);
-            }
-
-            await transaction.commit();
-            res.json({ success: true, message: "ทำรายการสำเร็จ! ระบบโอนเงินและกระจายรายได้เรียบร้อยแล้ว" });
-
-        } catch (err) {
-            await transaction.rollback();
-            throw err;
         }
 
+        // 7. อัปเดตสถานะ P2P_Orders เป็นสำเร็จ
+        await request
+            .query(`UPDATE P2P_Orders SET Status = 'COMPLETED', UpdatedAt = GETDATE() WHERE Id = @id`);
+
+        // ยืนยันการทำธุรกรรมทั้งหมด
+        await transaction.commit();
+        res.json({ success: true, message: "กระทบยอดและกระจายรายได้สำเร็จเรียบร้อย" });
+
     } catch (err) {
-        console.error("🔥 P2P Confirm Receipt Error:", err.message);
-        res.status(500).json({ success: false, error: err.message });
+        // ถ้ามีข้อผิดพลาดแม้แต่จุดเดียว ให้ย้อนกลับ (Rollback) ไม่มีการหักหรือเพิ่มเงินใดๆ
+        await transaction.rollback();
+        console.error("🔥 Error in P2P Confirm Receipt:", err.message);
+        res.status(500).json({ success: false, error: "เกิดข้อผิดพลาดในการกระจายเงิน: " + err.message });
     }
 });
 
@@ -2356,39 +2354,22 @@ app.get('/api/p2p/order/:id', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-
-// ==============================================================
-// 🌟 API P2P: ดึงรายการ P2P ของฉัน (My Orders)
-// ==============================================================
+// 🌟 แก้ไข API เดิม: ดึงรายการ P2P ของฉัน
 app.get('/api/p2p/my-orders/:username', async (req, res) => {
     const { username } = req.params;
     try {
         let pool = await sql.connect(config);
-        
-        // 1. หา UserId ก่อน
-        const userRes = await pool.request()
-            .input('user', sql.VarChar, username)
-            .query(`SELECT Id FROM UsersRegister WHERE Username = @user`);
-            
-        if (userRes.recordset.length === 0) return res.status(404).json({error: 'ไม่พบผู้ใช้งาน'});
-        const userId = userRes.recordset[0].Id;
-
-        // 2. ดึงรายการที่ตัวเองเป็น Requester (คนฝาก) หรือ MatchedUser (คนรับงาน)
-        const ordersRes = await pool.request()
-            .input('uid', sql.Int, userId)
+        const orders = await pool.request()
+            .input('username', sql.NVarChar, username)
             .query(`
-                SELECT 
-                    Id, OrderType, Amount, Status, CreatedAt, Currency,
-                    CASE WHEN RequesterId = @uid THEN 'REQUESTER' ELSE 'MATCHER' END as MyRole
-                FROM P2P_Orders
-                WHERE RequesterId = @uid OR MatchedUserId = @uid
+                SELECT * FROM P2P_Orders 
+                WHERE (Username = @username OR MatchedUsername = @username) 
+                AND Status IN ('PENDING', 'MATCHED', 'SLIP_UPLOADED', 'COMPLETED') -- 🌟 เพิ่ม SLIP_UPLOADED ตรงนี้
                 ORDER BY CreatedAt DESC
             `);
-            
-        res.json({ success: true, orders: ordersRes.recordset });
+        res.json({ success: true, orders: orders.recordset });
     } catch (err) {
-        console.error("🔥 Fetch My Orders Error:", err.message);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
