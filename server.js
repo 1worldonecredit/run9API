@@ -2021,20 +2021,21 @@ app.post('/api/p2p/create-order', async (req, res) => {
     }
 });
 
+
 app.get('/api/p2p/orders/pending', async (req, res) => {
     const { country } = req.query; 
     
     try {
         let pool = await sql.connect(config);
 
-        // 1. ยกเลิกงานที่เกิน 5 นาที
+        // 1. ระบบตัดงานที่หมดเวลา (เกิน 5 นาที)
         await pool.request().query(`
             UPDATE P2P_Orders 
             SET Status = 'CANCELLED', UpdatedAt = GETDATE()
             WHERE Status = 'PENDING' AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) > 5
         `);
 
-        // 2. ดึงข้อมูล 
+        // 2. ดึงข้อมูล (🌟 กลับมาใช้ RequesterId เชื่อมตาราง ตามโครงสร้างเดิมที่ถูกต้อง)
         let queryStr = `
             SELECT 
                 o.Id, 
@@ -2042,18 +2043,16 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
                 o.Amount, 
                 o.FeeAmount, 
                 o.CreatedAt,
-                o.Username
+                u.Username
             FROM P2P_Orders o
-            -- 🌟 แก้ไขตรงนี้: เปลี่ยนจากการเชื่อมด้วย Id เป็นการเชื่อมด้วย Username ให้ตรงกับโครงสร้างจริง
-            JOIN UsersRegister u ON o.Username = u.Username 
+            JOIN UsersRegister u ON o.RequesterId = u.Id
             WHERE o.Status = 'PENDING'
         `;
 
         const request = pool.request(); 
 
-        // 3. ตรวจสอบเงื่อนไขประเทศ
+        // 3. กรองตามประเทศของผู้ใช้งาน
         if (country) {
-            // 🌟 เช็กให้ชัวร์ว่าคอลัมน์ประเทศในฐานข้อมูลคุณชื่อ Country (ตัว C พิมพ์ใหญ่)
             queryStr += ` AND u.Country = @country `; 
             request.input('country', sql.NVarChar, country); 
         }
@@ -2068,6 +2067,8 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+
 // ==============================================================
 // 🌟 API (ใหม่): ดึงประวัติคำขอ P2P ของตัวเอง (My Orders)
 // ==============================================================
