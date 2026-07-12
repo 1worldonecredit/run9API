@@ -2425,6 +2425,30 @@ app.get('/api/p2p/my-orders/:username', async (req, res) => {
     }
 });
 
+// ==============================================================
+// 🌟 API: ดึงยอดเงินล่าสุดของผู้ใช้งาน (Wallet Balance)
+// ==============================================================
+app.get('/api/user/balance/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        const result = await pool.request()
+            .input('username', sql.NVarChar, username)
+            .query(`SELECT WalletBalance FROM UsersRegister WHERE Username = @username`);
+            
+        if (result.recordset.length > 0) {
+            // ดึงยอดเงินมา ถ้าเป็น null ให้ตีเป็น 0
+            const balance = result.recordset[0].WalletBalance || 0; 
+            res.json({ success: true, balance: balance });
+        } else {
+            res.status(404).json({ success: false, error: "ไม่พบผู้ใช้งาน" });
+        }
+    } catch (err) {
+        console.error("🔥 Error fetching balance:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
