@@ -2271,13 +2271,13 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         await request
             .input('reqUser', sql.NVarChar, requesterUsername)
             .input('amount', sql.Decimal(18, 2), amount)
-            .query(`UPDATE UsersRegister SET WalletBalance = ISNULL(WalletBalance, 0) + @amount WHERE Username = @reqUser`);
+            .query(`UPDATE UsersRegister SET Wallets = ISNULL(Wallets, 0) + @amount WHERE Username = @reqUser`);
 
         // 3. จ่ายค่าธรรมเนียมให้ผู้รับงาน (Matcher) เข้ากระเป๋า
         await request
             .input('matchUser', sql.NVarChar, matcherUsername)
             .input('fee', sql.Decimal(18, 2), feeAmount)
-            .query(`UPDATE UsersRegister SET WalletBalance = ISNULL(WalletBalance, 0) + @fee WHERE Username = @matchUser`);
+            .query(`UPDATE UsersRegister SET Wallets = ISNULL(Wallets, 0) + @fee WHERE Username = @matchUser`);
 
         // 4. บันทึก Transaction ฝั่งผู้ฝาก (รับเงินเข้า) 🌟 ตัวใหม่ใช้ _DEP
         await request
@@ -2309,7 +2309,7 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
             await request
                 .input('affUser', sql.NVarChar, referrerUsername)
                 .input('affFee', sql.Decimal(18, 2), affiliateFee)
-                .query(`UPDATE UsersRegister SET WalletBalance = ISNULL(WalletBalance, 0) + @affFee WHERE Username = @affUser`);
+                .query(`UPDATE UsersRegister SET Wallets = ISNULL(Wallets, 0) + @affFee WHERE Username = @affUser`);
 
             // 🌟 ตัวใหม่ใช้ _AFF
             await request
@@ -2426,11 +2426,11 @@ app.get('/api/user/balance/:username', async (req, res) => {
         let pool = await sql.connect(config);
         const result = await pool.request()
             .input('username', sql.NVarChar, username)
-            .query(`SELECT WalletBalance FROM UsersRegister WHERE Username = @username`);
+            .query(`SELECT Wallets FROM UsersRegister WHERE Username = @username`);
             
         if (result.recordset.length > 0) {
             // ดึงยอดเงินมา ถ้าเป็น null ให้ตีเป็น 0
-            const balance = result.recordset[0].WalletBalance || 0; 
+            const balance = result.recordset[0].Wallets || 0; 
             res.json({ success: true, balance: balance });
         } else {
             res.status(404).json({ success: false, error: "ไม่พบผู้ใช้งาน" });
