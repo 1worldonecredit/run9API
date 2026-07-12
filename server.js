@@ -2354,7 +2354,7 @@ app.get('/api/p2p/order/:id', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-// 🌟 แก้ไข API เดิม: ดึงรายการ P2P ของฉัน
+// ✅ โค้ดที่ถูกต้อง (สังเกตวงเล็บหน้า Username และหลัง @username)
 app.get('/api/p2p/my-orders/:username', async (req, res) => {
     const { username } = req.params;
     try {
@@ -2364,7 +2364,7 @@ app.get('/api/p2p/my-orders/:username', async (req, res) => {
             .query(`
                 SELECT * FROM P2P_Orders 
                 WHERE (Username = @username OR MatchedUsername = @username) 
-                AND Status IN ('PENDING', 'MATCHED', 'SLIP_UPLOADED', 'COMPLETED') -- 🌟 เพิ่ม SLIP_UPLOADED ตรงนี้
+                AND Status IN ('PENDING', 'MATCHED', 'SLIP_UPLOADED', 'COMPLETED')
                 ORDER BY CreatedAt DESC
             `);
         res.json({ success: true, orders: orders.recordset });
