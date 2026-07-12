@@ -2325,7 +2325,7 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API P2P (Step 5): ดึงรายละเอียด Order และบัญชีธนาคารของผู้รับงาน
+// 🌟 API P2P: ดึงรายละเอียด Order 1 รายการ (พร้อมบัญชีผู้รับงาน)
 // ==============================================================
 app.get('/api/p2p/order/:id', async (req, res) => {
     const { id } = req.params;
@@ -2343,12 +2343,14 @@ app.get('/api/p2p/order/:id', async (req, res) => {
                 FROM P2P_Orders o
                 LEFT JOIN UsersRegister reqU ON o.RequesterId = reqU.Id
                 LEFT JOIN UsersRegister matchU ON o.MatchedUserId = matchU.Id
-                -- ดึงบัญชีธนาคารของ "ผู้รับงาน (MatchedUser)" เพื่อให้ผู้ฝากโอนเงินไปให้
+                -- 🌟 ตรงนี้สำคัญ: ดึงบัญชีของผู้รับงานมาให้คนฝากโอนเงิน
                 LEFT JOIN UserBankAccounts b ON matchU.Username = b.Username AND (b.Status = 'Active' OR b.Status = 'APPROVED')
                 WHERE o.Id = @id
             `);
             
-        if (orderRes.recordset.length === 0) return res.status(404).json({ success: false, message: "ไม่พบรายการ" });
+        if (orderRes.recordset.length === 0) {
+            return res.status(404).json({ success: false, message: "ไม่พบรายการ" });
+        }
         
         res.json({ success: true, order: orderRes.recordset[0] });
     } catch (err) {
