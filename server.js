@@ -2328,9 +2328,41 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
                 `);
         }
 
-        // 7. อัปเดตสถานะ P2P_Orders เป็นสำเร็จ
+        // =========================================================
+        // 🔔 ระบบแจ้งเตือน (Notifications) ให้ผู้เกี่ยวข้องทั้ง 3 ฝ่าย
+        // =========================================================
+        
+        // 1. แจ้งเตือนผู้ฝากเงิน (Requester) ว่าเงินเข้าแล้ว
         await request
-            .query(`UPDATE P2P_Orders SET Status = 'COMPLETED', UpdatedAt = GETDATE() WHERE Id = @id`);
+            .input('reqNotifUser', sql.NVarChar, requesterUsername)
+            .input('reqNotifTitle', sql.NVarChar, 'รายการ P2P สำเร็จ 🎉')
+            .input('reqNotifMsg', sql.NVarChar, `คำขอเติมเงินจำนวน ${amount} สำเร็จแล้ว! ยอดเงินเข้ากระเป๋าของคุณเรียบร้อย`)
+            .query(`
+                INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) 
+                VALUES (@reqNotifUser, @reqNotifTitle, @reqNotifMsg, 0, GETDATE())
+            `);
+
+        // 2. แจ้งเตือนผู้รับงาน (Matcher) ว่าได้ค่าธรรมเนียมแล้ว
+        await request
+            .input('matchNotifUser', sql.NVarChar, matcherUsername)
+            .input('matchNotifTitle', sql.NVarChar, 'รับค่าธรรมเนียม P2P 💰')
+            .input('matchNotifMsg', sql.NVarChar, `คุณได้รับค่าธรรมเนียม ${feeAmount} จากการรับงาน P2P สำเร็จ`)
+            .query(`
+                INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) 
+                VALUES (@matchNotifUser, @matchNotifTitle, @matchNotifMsg, 0, GETDATE())
+            `);
+
+        // 3. แจ้งเตือนผู้แนะนำ (Affiliate) ถ้ามี
+        if (referrerRes.recordset.length > 0 && referrerRes.recordset[0].ReferrerUsername) {
+            await request
+                .input('affNotifUser', sql.NVarChar, referrerUsername)
+                .input('affNotifTitle', sql.NVarChar, 'ได้รับค่านายหน้า 5% 🎁')
+                .input('affNotifMsg', sql.NVarChar, `คุณได้รับค่านายหน้า ${affiliateFee} จากทีมงาน (${matcherUsername}) ที่ทำรายการ P2P สำเร็จ`)
+                .query(`
+                    INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) 
+                    VALUES (@affNotifUser, @affNotifTitle, @affNotifMsg, 0, GETDATE())
+                `);
+        }
 
         await transaction.commit();
         res.json({ success: true, message: "กระทบยอดและกระจายรายได้สำเร็จเรียบร้อย" });
