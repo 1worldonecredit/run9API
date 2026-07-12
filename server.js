@@ -2047,32 +2047,27 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-
-/// ==============================================================
-// 🌟 API: ดึงประวัติรายการ P2P (แก้ปัญหา Error 500)
-// ==============================================================
 app.get('/api/p2p/my-orders/:username', async (req, res) => {
     const { username } = req.params;
     try {
         let pool = await sql.connect(config);
-        const request = pool.request();
         
-        request.input('user', sql.NVarChar, username);
-
-        // 🚨 จุดสำคัญ: ถ้าคอลัมน์ใน Database ของคุณไม่ได้ชื่อ MatchedUsername 
-        // ให้แก้คำว่า MatchedUsername ด้านล่างนี้ ให้ตรงกับใน Database ของคุณเป๊ะๆ นะครับ
-        // (เช่น อาจจะเป็น MatcherUsername, MatcherId, ReceiverUsername ฯลฯ)
+        // 🚨 แก้ไขตรงนี้: ลองเปลี่ยนจาก MatchedUsername เป็น MatcherUsername 
+        // (ถ้าใน Database คุณตั้งชื่ออื่น ให้เปลี่ยนให้ตรงเป๊ะๆ นะครับ)
         const queryStr = `
             SELECT * FROM P2P_Orders 
-            WHERE Username = @user OR MatchedUsername = @user 
+            WHERE Username = @user OR MatcherUsername = @user 
             ORDER BY CreatedAt DESC
         `;
         
-        const result = await request.query(queryStr);
+        const result = await pool.request()
+            .input('user', sql.NVarChar, username)
+            .query(queryStr);
+            
         res.json({ success: true, orders: result.recordset });
 
     } catch (err) {
-        // ถ้าพัง มันจะส่ง Error Message กลับไปให้หน้าบ้านเห็น
+        // ส่ง Error ออกมาให้เราเห็นชัดๆ ในแท็บ Network -> Response
         console.error("🔥 Error fetching my orders:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
