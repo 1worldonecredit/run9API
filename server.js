@@ -2049,7 +2049,7 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
 });
 
 /// ==============================================================
-// 🌟 API: ดึงประวัติรายการ P2P ของฉัน (ทั้งฝั่งคนฝาก และ คนรับงาน)
+// 🌟 API: ดึงประวัติรายการ P2P (แก้ปัญหา Error 500)
 // ==============================================================
 app.get('/api/p2p/my-orders/:username', async (req, res) => {
     const { username } = req.params;
@@ -2057,10 +2057,11 @@ app.get('/api/p2p/my-orders/:username', async (req, res) => {
         let pool = await sql.connect(config);
         const request = pool.request();
         
-        // รับค่า username ที่ส่งมาจากหน้าบ้าน
         request.input('user', sql.NVarChar, username);
 
-        // 🌟 จุดที่แก้ไข: สั่งให้ฐานข้อมูลหาทั้ง Username (คนฝาก) หรือ MatchedUsername (คนรับงาน)
+        // 🚨 จุดสำคัญ: ถ้าคอลัมน์ใน Database ของคุณไม่ได้ชื่อ MatchedUsername 
+        // ให้แก้คำว่า MatchedUsername ด้านล่างนี้ ให้ตรงกับใน Database ของคุณเป๊ะๆ นะครับ
+        // (เช่น อาจจะเป็น MatcherUsername, MatcherId, ReceiverUsername ฯลฯ)
         const queryStr = `
             SELECT * FROM P2P_Orders 
             WHERE Username = @user OR MatchedUsername = @user 
@@ -2071,6 +2072,7 @@ app.get('/api/p2p/my-orders/:username', async (req, res) => {
         res.json({ success: true, orders: result.recordset });
 
     } catch (err) {
+        // ถ้าพัง มันจะส่ง Error Message กลับไปให้หน้าบ้านเห็น
         console.error("🔥 Error fetching my orders:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
