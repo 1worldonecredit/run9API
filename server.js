@@ -2240,12 +2240,6 @@ app.post('/api/p2p/upload-slip', async (req, res) => {
  
 
 // ==============================================================
-// 🌟 API P2P (Step 4): ผู้รับงานยืนยันได้รับยอดเงิน (จบงาน + จ่าย Affiliate 5%)
-// ==============================================================
-// ==============================================================
-// 🌟 API P2P: ผู้รับงานยืนยันได้รับเงิน (กระจายเงิน + จ่าย 5% + สร้างประวัติ)
-// ==============================================================
-// ==============================================================
 // 🌟 API P2P: ผู้รับงานยืนยันได้รับเงิน (กระจายเงิน + จ่าย 5% + สร้างประวัติ)
 // ==============================================================
 app.post('/api/p2p/confirm-receipt', async (req, res) => {
@@ -2297,7 +2291,7 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         `);
 
         // =========================================================
-        // 🌟 3. บันทึกประวัติ (ตาราง Transactions ตามโครงสร้างใหม่)
+        // 🌟 3. บันทึกประวัติ (ตาราง Transactions)
         // =========================================================
         
         // 3.1 บันทึกฝั่งผู้ฝาก
@@ -2321,15 +2315,17 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         `);
 
         // ==========================================================
-        // 🌟 4. ระบบจ่าย Affiliate 5% ให้ผู้แนะนำ
+        // 🌟 4. ระบบจ่าย Affiliate 5% ให้ผู้แนะนำ (แก้ไขชื่อคอลัมน์แล้ว)
         // ==========================================================
         const affiliateFee = feeAmount * 0.05;
         const reqReferrer = new sql.Request(transaction);
         reqReferrer.input('matchUser', sql.NVarChar, matcherUsername);
-        const referrerRes = await reqReferrer.query(`SELECT ReferrerUsername FROM UsersRegister WHERE Username = @matchUser`);
+        
+        // 🚨 แก้ไขเป็น ReferralUsername ตาม Database
+        const referrerRes = await reqReferrer.query(`SELECT ReferralUsername FROM UsersRegister WHERE Username = @matchUser`);
             
-        if (referrerRes.recordset.length > 0 && referrerRes.recordset[0].ReferrerUsername) {
-            const referrerUsername = referrerRes.recordset[0].ReferrerUsername;
+        if (referrerRes.recordset.length > 0 && referrerRes.recordset[0].ReferralUsername) {
+            const referrerUsername = referrerRes.recordset[0].ReferralUsername;
 
             const reqAffWallet = new sql.Request(transaction);
             reqAffWallet.input('affUser', sql.NVarChar, referrerUsername);
@@ -2351,7 +2347,7 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         }
 
         // =========================================================
-        // 🌟 5. อัปเดตสถานะออเดอร์เป็น COMPLETED (ปิดจ็อบ)
+        // 🌟 5. อัปเดตสถานะออเดอร์เป็น COMPLETED
         // =========================================================
         const reqUpdateOrder = new sql.Request(transaction);
         reqUpdateOrder.input('id', sql.Int, orderId);
