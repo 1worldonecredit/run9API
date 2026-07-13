@@ -1384,6 +1384,9 @@ app.post('/api/user/bank', async (req, res) => {
 // ==============================================================
 // 🌟 API ดึงรายชื่อธนาคาร คัดกรองตามประเทศ (TH/LA) ของ User
 // ==============================================================
+// ==============================================================
+// 🌟 API ดึงรายชื่อธนาคาร คัดกรองตามประเทศ (TH/LA) แบบแม่นยำ 100%
+// ==============================================================
 app.get('/api/system/banks', async (req, res) => {
     const { username } = req.query;
     if (!username) return res.status(400).json({ error: "ระบุผู้ใช้งาน" });
@@ -1391,20 +1394,25 @@ app.get('/api/system/banks', async (req, res) => {
     try {
         let pool = await sql.connect(config);
 
-        // 1. ตรวจสอบสัญชาติ (Country) ของ User จากตาราง UsersRegister
+        // 1. ดึงข้อมูลประเทศของผู้ใช้งาน
         const userRes = await pool.request()
             .input('user', sql.VarChar, username)
             .query(`SELECT Country FROM UsersRegister WHERE Username = @user`);
 
-        // ตั้งค่าเริ่มต้นเป็น 'TH' (ไทย) ไว้ก่อนเผื่อหาข้อมูลไม่พบ
-        let userCountry = 'TH'; 
+        // 2. แปลงชื่อประเทศให้ตรงกับตาราง SystemBanks (TH หรือ LA)
+        let dbCountry = 'TH'; // ค่าเริ่มต้น
         if (userRes.recordset.length > 0 && userRes.recordset[0].Country) {
-            userCountry = userRes.recordset[0].Country;
+            let rawCountry = userRes.recordset[0].Country.toLowerCase();
+            if (rawCountry.includes('lao') || rawCountry.includes('ลาว')) {
+                dbCountry = 'LA';
+            } else if (rawCountry.includes('thai') || rawCountry.includes('ไทย')) {
+                dbCountry = 'TH';
+            }
         }
 
-        // 2. ดึงรายชื่อธนาคารและโลโก้ เฉพาะที่ตรงกับประเทศ (Country) ของ User และเปิดใช้งานอยู่ (IsActive = 1)
+        // 3. ดึงธนาคารเฉพาะประเทศนั้นๆ
         const result = await pool.request()
-            .input('country', sql.VarChar, userCountry)
+            .input('country', sql.VarChar, dbCountry)
             .query(`
                 SELECT BankCode, BankName, BankLogo 
                 FROM SystemBanks 
@@ -1417,6 +1425,7 @@ app.get('/api/system/banks', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
 // ==============================================================
 // 🌟 [FRONTEND API] ลูกค้าเพิ่มบัญชีธนาคาร พร้อมแนบรูปสมุดบัญชี (รอ KYC)
 // ==============================================================
