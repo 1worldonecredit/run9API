@@ -2405,21 +2405,34 @@ app.get('/api/p2p/order/:id', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-// ✅ โค้ดที่ถูกต้อง (สังเกตวงเล็บหน้า Username และหลัง @username)
+// ==============================================================
+// 🌟 API: ดึงประวัติรายการ P2P (แก้ปัญหา Role สลับฝั่งในหน้าประวัติ)
+// ==============================================================
 app.get('/api/p2p/my-orders/:username', async (req, res) => {
     const { username } = req.params;
     try {
         let pool = await sql.connect(config);
-        const orders = await pool.request()
-            .input('username', sql.NVarChar, username)
-            .query(`
-                SELECT * FROM P2P_Orders 
-                WHERE (Username = @username OR MatchedUsername = @username) 
-                AND Status IN ('PENDING', 'MATCHED', 'SLIP_UPLOADED', 'COMPLETED')
-                ORDER BY CreatedAt DESC
-            `);
-        res.json({ success: true, orders: orders.recordset });
+        const request = pool.request();
+        request.input('user', sql.NVarChar, username);
+
+        // ใช้ JOIN ดึงชื่อ RequesterUsername และ MatcherUsername ออกมาให้หน้าบ้านเปรียบเทียบ
+        const queryStr = `
+            SELECT 
+                o.*, 
+                req.Username AS RequesterUsername, 
+                match.Username AS MatcherUsername
+            FROM P2P_Orders o
+            LEFT JOIN UsersRegister req ON o.RequesterId = req.Id
+            LEFT JOIN UsersRegister match ON o.MatchedUserId = match.Id
+            WHERE req.Username = @user OR match.Username = @user 
+            ORDER BY o.CreatedAt DESC
+        `;
+        
+        const result = await request.query(queryStr);
+        res.json({ success: true, orders: result.recordset });
+
     } catch (err) {
+        console.error("🔥 Error fetching my orders:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 });
