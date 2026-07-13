@@ -2342,7 +2342,6 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
     try {
         await transaction.begin();
         
-        // 🌟 1. ดึงข้อมูลออเดอร์ พร้อม JOIN ตารางผู้ใช้เพื่อเอา "ชื่อ (Username)" ที่แท้จริงออกมา
         const reqOrder = new sql.Request(transaction);
         reqOrder.input('id', sql.Int, orderId);
         const orderRes = await reqOrder.query(`
@@ -2362,8 +2361,6 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         }
         
         const order = orderRes.recordset[0];
-        
-        // ได้ตัวแปรที่ถูกต้อง 100% แล้ว
         const reqUserId = order.RequesterId;
         const matchUserId = order.MatchedUserId;
         const requesterUsername = order.RequesterUsername; 
@@ -2375,25 +2372,34 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         const refCode = `P2P-${orderId}`; 
 
         // =========================================================
-        // 🌟 2. อัปเดตเงินเข้ากระเป๋า (ใช้ UserId ตรงๆ ป้องกันข้อผิดพลาด)
+        // 🌟 2. อัปเดตเงินเข้ากระเป๋า (ใช้ระบบ IF EXISTS กันบั๊ก User ใหม่)
         // =========================================================
         
-        // 2.1 โอนเงินเข้ากระเป๋าผู้ฝากเงิน (Requester)
+        // 2.1 ผู้ฝากเงิน (Requester)
         const reqWallet1 = new sql.Request(transaction);
         reqWallet1.input('reqUserId', sql.Int, reqUserId);
         reqWallet1.input('amount', sql.Decimal(18, 4), amount);
-        await reqWallet1.query(`UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @amount, LastUpdated = GETDATE() WHERE UserId = @reqUserId`);
+        await reqWallet1.query(`
+            IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @reqUserId)
+                UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @amount, LastUpdated = GETDATE() WHERE UserId = @reqUserId;
+            ELSE
+                INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated) VALUES (@reqUserId, @amount, 'THB', GETDATE());
+        `);
 
-        // 2.2 จ่ายค่าธรรมเนียมให้ผู้รับงาน (Matcher)
+        // 2.2 ผู้รับงาน (Matcher) ได้ค่าธรรมเนียม
         const reqWallet2 = new sql.Request(transaction);
         reqWallet2.input('matchUserId', sql.Int, matchUserId);
         reqWallet2.input('fee', sql.Decimal(18, 4), feeAmount);
-        await reqWallet2.query(`UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @fee, LastUpdated = GETDATE() WHERE UserId = @matchUserId`);
+        await reqWallet2.query(`
+            IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @matchUserId)
+                UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @fee, LastUpdated = GETDATE() WHERE UserId = @matchUserId;
+            ELSE
+                INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated) VALUES (@matchUserId, @fee, 'THB', GETDATE());
+        `);
 
         // =========================================================
         // 🌟 3. บันทึกประวัติ (Transactions)
         // =========================================================
-        
         const reqTrans1 = new sql.Request(transaction);
         reqTrans1.input('reqUserId', sql.Int, reqUserId);
         reqTrans1.input('amount', sql.Decimal(18, 4), amount);
@@ -2415,7 +2421,14 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
             const reqAffWallet = new sql.Request(transaction);
             reqAffWallet.input('affUser', sql.NVarChar, referrerUsername);
             reqAffWallet.input('affFee', sql.Decimal(18, 4), affiliateFee);
-            await reqAffWallet.query(`UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @affFee, LastUpdated = GETDATE() WHERE UserId = (SELECT Id FROM UsersRegister WHERE Username = @affUser)`);
+            // โอนเงินเข้ากระเป๋าผู้แนะนำ (รองรับผู้แนะนำที่เป็น User ใหม่เช่นกัน)
+            await reqAffWallet.query(`
+                DECLARE @affUserId INT = (SELECT Id FROM UsersRegister WHERE Username = @affUser);
+                IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @affUserId)
+                    UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @affFee, LastUpdated = GETDATE() WHERE UserId = @affUserId;
+                ELSE
+                    INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated) VALUES (@affUserId, @affFee, 'THB', GETDATE());
+            `);
 
             const reqAffTrans = new sql.Request(transaction);
             reqAffTrans.input('affUser', sql.NVarChar, referrerUsername);
