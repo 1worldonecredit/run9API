@@ -2255,12 +2255,11 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
 
     try {
         await transaction.begin();
-        const request = new sql.Request(transaction);
         
         // 1. ดึงข้อมูลออเดอร์
-        const orderRes = await request
-            .input('id', sql.Int, orderId)
-            .query(`SELECT * FROM P2P_Orders WHERE Id = @id AND Status = 'SLIP_UPLOADED'`);
+        const reqOrder = new sql.Request(transaction);
+        reqOrder.input('id', sql.Int, orderId);
+        const orderRes = await reqOrder.query(`SELECT * FROM P2P_Orders WHERE Id = @id AND Status = 'SLIP_UPLOADED'`);
             
         if (orderRes.recordset.length === 0) {
             throw new Error("ไม่พบรายการ หรือสถานะไม่ถูกต้อง (อาจมีการอนุมัติไปแล้ว)");
@@ -2271,96 +2270,107 @@ app.post('/api/p2p/confirm-receipt', async (req, res) => {
         const matcherUsername = order.MatchedUsername; // ผู้รับงาน
         const amount = order.Amount; // ยอดเติม
         const feeAmount = order.FeeAmount; // ค่าธรรมเนียมผู้รับงาน
-        const refCode = `P2P-${orderId}`; // รหัสอ้างอิง Transaction
+        const refCode = `P2P-${orderId}`; // รหัสอ้างอิง
 
-        // 2. โอนเงินที่กักไว้ (Escrow) เข้ากระเป๋าผู้ฝากเงิน (Requester)
-        await request
-            .input('reqUser', sql.NVarChar, requesterUsername)
-            .input('amount', sql.Decimal(18, 2), amount)
-            .query(`UPDATE UsersRegister SET Wallets = ISNULL(Wallets, 0) + @amount WHERE Username = @reqUser`);
+        // =========================================================
+        // 🌟 2. อัปเดตเงินเข้ากระเป๋า (ตาราง Wallets คอลัมน์ Balance)
+        // =========================================================
+        
+        // 2.1 โอนเงินที่กักไว้เข้ากระเป๋าผู้ฝากเงิน (Requester)
+        const reqWallet1 = new sql.Request(transaction);
+        reqWallet1.input('reqUser', sql.NVarChar, requesterUsername);
+        reqWallet1.input('amount', sql.Decimal(18, 4), amount);
+        await reqWallet1.query(`
+            UPDATE Wallets 
+            SET Balance = ISNULL(Balance, 0) + @amount, LastUpdated = GETDATE()
+            WHERE UserId = (SELECT Id FROM UsersRegister WHERE Username = @reqUser)
+        `);
 
-        // 3. จ่ายค่าธรรมเนียมให้ผู้รับงาน (Matcher) เข้ากระเป๋า
-        await request
-            .input('matchUser', sql.NVarChar, matcherUsername)
-            .input('fee', sql.Decimal(18, 2), feeAmount)
-            .query(`UPDATE UsersRegister SET Wallets = ISNULL(Wallets, 0) + @fee WHERE Username = @matchUser`);
+        // 2.2 จ่ายค่าธรรมเนียมให้ผู้รับงาน (Matcher)
+        const reqWallet2 = new sql.Request(transaction);
+        reqWallet2.input('matchUser', sql.NVarChar, matcherUsername);
+        reqWallet2.input('fee', sql.Decimal(18, 4), feeAmount);
+        await reqWallet2.query(`
+            UPDATE Wallets 
+            SET Balance = ISNULL(Balance, 0) + @fee, LastUpdated = GETDATE()
+            WHERE UserId = (SELECT Id FROM UsersRegister WHERE Username = @matchUser)
+        `);
 
-        // 4. บันทึก Transaction ฝั่งผู้ฝาก (รับเงินเข้า) 🌟 ตัวใหม่ใช้ _DEP
-        await request
-            .input('reqDesc', sql.NVarChar, `เติมเงินผ่าน P2P สำเร็จ (รหัสรับงาน: ${matcherUsername})`)
-            .query(`
-                INSERT INTO Transactions (Username, Type, Amount, Status, Description, ReferenceCode, CreatedAt) 
-                VALUES (@reqUser, 'DEPOSIT', @amount, 'COMPLETED', @reqDesc, '${refCode}_DEP', GETDATE())
-            `);
+        // =========================================================
+        // 🌟 3. บันทึกประวัติ (ตาราง Transactions ตามโครงสร้างใหม่)
+        // =========================================================
+        
+        // 3.1 บันทึกฝั่งผู้ฝาก
+        const reqTrans1 = new sql.Request(transaction);
+        reqTrans1.input('reqUser', sql.NVarChar, requesterUsername);
+        reqTrans1.input('amount', sql.Decimal(18, 4), amount);
+        reqTrans1.input('ref', sql.VarChar, `${refCode}_DEP`);
+        await reqTrans1.query(`
+            INSERT INTO Transactions (UserId, TransactionType, Amount, Status, ReferenceId, CreatedAt) 
+            VALUES ((SELECT Id FROM UsersRegister WHERE Username = @reqUser), 'DEPOSIT', @amount, 'COMPLETED', @ref, GETDATE())
+        `);
 
-        // 5. บันทึก Transaction ฝั่งผู้รับงาน (รับค่าธรรมเนียม) 🌟 ตัวใหม่ใช้ _FEE
-        await request
-            .input('matchDesc', sql.NVarChar, `รายได้ค่าธรรมเนียมรับงาน P2P (รหัสคำขอ: ${orderId})`)
-            .query(`
-                INSERT INTO Transactions (Username, Type, Amount, Status, Description, ReferenceCode, CreatedAt) 
-                VALUES (@matchUser, 'P2P_FEE', @fee, 'COMPLETED', @matchDesc, '${refCode}_FEE', GETDATE())
-            `);
+        // 3.2 บันทึกฝั่งผู้รับงาน
+        const reqTrans2 = new sql.Request(transaction);
+        reqTrans2.input('matchUser', sql.NVarChar, matcherUsername);
+        reqTrans2.input('fee', sql.Decimal(18, 4), feeAmount);
+        reqTrans2.input('ref', sql.VarChar, `${refCode}_FEE`);
+        await reqTrans2.query(`
+            INSERT INTO Transactions (UserId, TransactionType, Amount, Status, ReferenceId, CreatedAt) 
+            VALUES ((SELECT Id FROM UsersRegister WHERE Username = @matchUser), 'P2P_FEE', @fee, 'COMPLETED', @ref, GETDATE())
+        `);
 
         // ==========================================================
-        // 🌟 6. ระบบคำนวณและจ่าย Affiliate 5% ให้ผู้แนะนำของผู้รับงาน
+        // 🌟 4. ระบบจ่าย Affiliate 5% ให้ผู้แนะนำ
         // ==========================================================
         const affiliateFee = feeAmount * 0.05;
-
-        const referrerRes = await request
-            .query(`SELECT ReferrerUsername FROM UsersRegister WHERE Username = @matchUser`);
+        const reqReferrer = new sql.Request(transaction);
+        reqReferrer.input('matchUser', sql.NVarChar, matcherUsername);
+        const referrerRes = await reqReferrer.query(`SELECT ReferrerUsername FROM UsersRegister WHERE Username = @matchUser`);
             
         if (referrerRes.recordset.length > 0 && referrerRes.recordset[0].ReferrerUsername) {
             const referrerUsername = referrerRes.recordset[0].ReferrerUsername;
 
-            await request
-                .input('affUser', sql.NVarChar, referrerUsername)
-                .input('affFee', sql.Decimal(18, 2), affiliateFee)
-                .query(`UPDATE UsersRegister SET Wallets = ISNULL(Wallets, 0) + @affFee WHERE Username = @affUser`);
+            const reqAffWallet = new sql.Request(transaction);
+            reqAffWallet.input('affUser', sql.NVarChar, referrerUsername);
+            reqAffWallet.input('affFee', sql.Decimal(18, 4), affiliateFee);
+            await reqAffWallet.query(`
+                UPDATE Wallets 
+                SET Balance = ISNULL(Balance, 0) + @affFee, LastUpdated = GETDATE()
+                WHERE UserId = (SELECT Id FROM UsersRegister WHERE Username = @affUser)
+            `);
 
-            // 🌟 ตัวใหม่ใช้ _AFF
-            await request
-                .input('affDesc', sql.NVarChar, `ค่านายหน้า 5% จากทีมงาน (P2P Fee จาก ${matcherUsername})`)
-                .query(`
-                    INSERT INTO Transactions (Username, Type, Amount, Status, Description, ReferenceCode, CreatedAt) 
-                    VALUES (@affUser, 'AFFILIATE_COMMISSION', @affFee, 'COMPLETED', @affDesc, '${refCode}_AFF', GETDATE())
-                `);
+            const reqAffTrans = new sql.Request(transaction);
+            reqAffTrans.input('affUser', sql.NVarChar, referrerUsername);
+            reqAffTrans.input('affFee', sql.Decimal(18, 4), affiliateFee);
+            reqAffTrans.input('ref', sql.VarChar, `${refCode}_AFF`);
+            await reqAffTrans.query(`
+                INSERT INTO Transactions (UserId, TransactionType, Amount, Status, ReferenceId, CreatedAt) 
+                VALUES ((SELECT Id FROM UsersRegister WHERE Username = @affUser), 'AFFILIATE_FEE', @affFee, 'COMPLETED', @ref, GETDATE())
+            `);
         }
 
         // =========================================================
-        // 🔔 ระบบแจ้งเตือน (Notifications) ให้ผู้เกี่ยวข้องทั้ง 3 ฝ่าย
+        // 🌟 5. อัปเดตสถานะออเดอร์เป็น COMPLETED (ปิดจ็อบ)
         // =========================================================
-        
-        // 1. แจ้งเตือนผู้ฝากเงิน (Requester) ว่าเงินเข้าแล้ว
-        await request
-            .input('reqNotifUser', sql.NVarChar, requesterUsername)
-            .input('reqNotifTitle', sql.NVarChar, 'รายการ P2P สำเร็จ 🎉')
-            .input('reqNotifMsg', sql.NVarChar, `คำขอเติมเงินจำนวน ${amount} สำเร็จแล้ว! ยอดเงินเข้ากระเป๋าของคุณเรียบร้อย`)
-            .query(`
-                INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) 
-                VALUES (@reqNotifUser, @reqNotifTitle, @reqNotifMsg, 0, GETDATE())
-            `);
+        const reqUpdateOrder = new sql.Request(transaction);
+        reqUpdateOrder.input('id', sql.Int, orderId);
+        await reqUpdateOrder.query(`UPDATE P2P_Orders SET Status = 'COMPLETED', CompletedAt = GETDATE() WHERE Id = @id`);
 
-        // 2. แจ้งเตือนผู้รับงาน (Matcher) ว่าได้ค่าธรรมเนียมแล้ว
-        await request
-            .input('matchNotifUser', sql.NVarChar, matcherUsername)
-            .input('matchNotifTitle', sql.NVarChar, 'รับค่าธรรมเนียม P2P 💰')
-            .input('matchNotifMsg', sql.NVarChar, `คุณได้รับค่าธรรมเนียม ${feeAmount} จากการรับงาน P2P สำเร็จ`)
-            .query(`
-                INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) 
-                VALUES (@matchNotifUser, @matchNotifTitle, @matchNotifMsg, 0, GETDATE())
-            `);
+        // =========================================================
+        // 🔔 6. ระบบแจ้งเตือน (Notifications) 
+        // =========================================================
+        const reqNotif1 = new sql.Request(transaction);
+        reqNotif1.input('reqNotifUser', sql.NVarChar, requesterUsername);
+        reqNotif1.input('reqNotifTitle', sql.NVarChar, 'รายการ P2P สำเร็จ 🎉');
+        reqNotif1.input('reqNotifMsg', sql.NVarChar, `คำขอเติมเงินจำนวน ${amount} สำเร็จแล้ว! ยอดเงินเข้ากระเป๋าของคุณเรียบร้อย`);
+        await reqNotif1.query(`INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) VALUES (@reqNotifUser, @reqNotifTitle, @reqNotifMsg, 0, GETDATE())`);
 
-        // 3. แจ้งเตือนผู้แนะนำ (Affiliate) ถ้ามี
-        if (referrerRes.recordset.length > 0 && referrerRes.recordset[0].ReferrerUsername) {
-            await request
-                .input('affNotifUser', sql.NVarChar, referrerUsername)
-                .input('affNotifTitle', sql.NVarChar, 'ได้รับค่านายหน้า 5% 🎁')
-                .input('affNotifMsg', sql.NVarChar, `คุณได้รับค่านายหน้า ${affiliateFee} จากทีมงาน (${matcherUsername}) ที่ทำรายการ P2P สำเร็จ`)
-                .query(`
-                    INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) 
-                    VALUES (@affNotifUser, @affNotifTitle, @affNotifMsg, 0, GETDATE())
-                `);
-        }
+        const reqNotif2 = new sql.Request(transaction);
+        reqNotif2.input('matchNotifUser', sql.NVarChar, matcherUsername);
+        reqNotif2.input('matchNotifTitle', sql.NVarChar, 'รับค่าธรรมเนียม P2P 💰');
+        reqNotif2.input('matchNotifMsg', sql.NVarChar, `คุณได้รับค่าธรรมเนียม ${feeAmount} จากการรับงาน P2P สำเร็จ`);
+        await reqNotif2.query(`INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) VALUES (@matchNotifUser, @matchNotifTitle, @matchNotifMsg, 0, GETDATE())`);
 
         await transaction.commit();
         res.json({ success: true, message: "กระทบยอดและกระจายรายได้สำเร็จเรียบร้อย" });
