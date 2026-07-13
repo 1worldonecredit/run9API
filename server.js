@@ -2209,25 +2209,37 @@ app.post('/api/p2p/match-order', async (req, res) => {
 // ==============================================================
 // 🌟 API P2P (Step 3): ผู้ฝากเงินอัปโหลดสลิป
 // ==============================================================
+// ==============================================================
+// 🌟 API: อัปโหลดสลิปและเปลี่ยนสถานะ (แก้ปัญหา SlipUrl เป็น NULL)
+// ==============================================================
 app.post('/api/p2p/upload-slip', async (req, res) => {
-    const { orderId, slipImageBase64 } = req.body;
+    // 1. รับค่าตัวแปรให้ตรงกับที่หน้าบ้านส่งมาเป๊ะๆ (หน้าบ้านส่ง slipBase64 มา)
+    const { orderId, slipBase64, transferAmount, transferDate, transferTime } = req.body;
 
     try {
         let pool = await sql.connect(config);
-        
-        // อัปเดตสถานะเป็น SLIP_UPLOADED และเซฟรูป
-        await pool.request()
-            .input('oId', sql.Int, orderId)
-            .input('slip', sql.NVarChar(sql.MAX), slipImageBase64)
-            .query(`
-                UPDATE P2P_Orders 
-                SET Status = 'SLIP_UPLOADED', SlipUrl = @slip 
-                WHERE Id = @oId AND Status = 'MATCHED'
-            `);
+        const request = pool.request();
 
-        res.json({ success: true, message: "อัปโหลดสลิปสำเร็จ รอผู้รับงานตรวจสอบ" });
+        // 2. ผูกตัวแปรเตรียมส่งเข้า Database
+        request.input('orderId', sql.Int, orderId);
+        
+        // 🚨 จุดสำคัญมาก: Base64 ของรูปภาพมีขนาดยาวมาก ต้องใช้ NVarChar(MAX) ไม่งั้นบันทึกไม่เข้าครับ
+        request.input('slipUrl', sql.NVarChar(sql.MAX), slipBase64);
+
+        // 3. คำสั่ง SQL อัปเดตข้อมูล (นำ @slipUrl ไปบันทึกลงคอลัมน์ SlipUrl)
+        const queryStr = `
+            UPDATE P2P_Orders
+            SET Status = 'SLIP_UPLOADED', 
+                SlipUrl = @slipUrl,
+                UpdatedAt = GETDATE()
+            WHERE Id = @orderId
+        `;
+
+        await request.query(queryStr);
+        res.json({ success: true, message: 'Upload slip successfully' });
+
     } catch (err) {
-        console.error("🔥 P2P Upload Slip Error:", err.message);
+        console.error("🔥 Error Uploading Slip:", err.message);
         res.status(500).json({ success: false, error: err.message });
     }
 });
