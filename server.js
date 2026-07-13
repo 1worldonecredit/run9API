@@ -923,6 +923,89 @@ app.post('/register', async (req, res) => {
 });
 
 // ==============================================================
+// 🌟 API: ขอรับ OTP (เชื่อมต่อผ่าน Movider Gateway)
+// ==============================================================
+app.post('/api/user/request-otp', async (req, res) => {
+    const { username, phone } = req.body;
+    // สร้าง OTP 6 หลัก
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const smsMessage = `รหัส OTP ของคุณคือ: ${otp} (ห้ามให้รหัสนี้กับบุคคลอื่น)`;
+
+    try {
+        // 1. ยิง API ไปหา Movider (Gateway)
+        const moviderResponse = await fetch('https://api.movider.co/v1/sms', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Authorization': 'Basic ' + Buffer.from('3FJGCCT6ooyRpBAKHQBvLDVghwW:9xms_vfHccJELxMmyMfTWn2u2mEJCR').toString('base64')
+            },
+            body: new URLSearchParams({
+                'to': phone, // เบอร์ปลายทางที่ส่งมา
+                'text': smsMessage,
+                'from': 'K2CLaos' // Sender Name ที่ผ่านการอนุมัติแล้ว
+            })
+        });
+
+        const result = await moviderResponse.json();
+
+        // 2. ถ้าส่ง SMS สำเร็จ ให้บันทึก OTP ลงฐานข้อมูล (เพื่อรอตรวจสอบ)
+        if (moviderResponse.ok || result.success) {
+            let pool = await sql.connect(config);
+            // แนะนำให้คุณสร้างคอลัมน์ TempOTP ในตาราง UsersRegister (หรือตารางแยก) เพื่อเก็บชั่วคราว
+            await pool.request()
+                .input('user', sql.VarChar, username)
+                .input('otp', sql.VarChar, otp)
+                .input('phone', sql.VarChar, phone)
+                .query(`
+                    UPDATE UsersRegister 
+                    SET TempOTP = @otp, TempPhone = @phone 
+                    WHERE Username = @user
+                `);
+            
+            res.json({ success: true, message: 'ส่ง OTP สำเร็จ' });
+        } else {
+            res.status(400).json({ success: false, error: 'Gateway Error: ' + result.error_description });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 API: ยืนยันรหัส OTP และบันทึกเบอร์โทร
+// ==============================================================
+app.post('/api/user/verify-otp', async (req, res) => {
+    const { username, otp, phone } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        
+        // 1. เช็กว่า OTP ตรงกับที่บันทึกไว้ในระบบไหม
+        const result = await pool.request()
+            .input('user', sql.VarChar, username)
+            .query(`SELECT TempOTP FROM UsersRegister WHERE Username = @user`);
+
+        if (result.recordset.length > 0 && result.recordset[0].TempOTP === otp) {
+            // 2. ถ้า OTP ถูกต้อง ให้อัปเดตเบอร์จริงและเปลี่ยนสถานะยืนยัน
+            await pool.request()
+                .input('user', sql.VarChar, username)
+                .input('phone', sql.VarChar, phone)
+                .query(`
+                    UPDATE UsersRegister 
+                    SET PhoneNumber = @phone, IsPhoneVerified = 1, TempOTP = NULL 
+                    WHERE Username = @user
+                `);
+            
+            res.json({ success: true, message: 'ยืนยันเบอร์โทรศัพท์สำเร็จ' });
+        } else {
+            res.status(400).json({ success: false, error: 'รหัส OTP ไม่ถูกต้อง' });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
+// ==============================================================
 // 3. API สำหรับตรวจสอบชื่อผู้แนะนำ (และดึงชื่อ-สกุลจริงจาก UserNames)
 // ==============================================================
 app.post('/check-referral', async (req, res) => {
