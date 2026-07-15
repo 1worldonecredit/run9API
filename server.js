@@ -6,7 +6,7 @@ require('dotenv').config();
 const app = express();
 // --- วาง CORS ตรงนี้เลยครับ ---
 app.use(cors({
-    origin: ['https://run9.app', 'https://soidao.run9.app','http://localhost:5173'], // เพิ่ม localhost สำหรับใช้ทดสอบตอนเขียนโค้ด
+    origin: ['https://run9.app', 'https://soidao.run9.app','http://localhost:5173','http://localhost:5174'], // เพิ่ม localhost สำหรับใช้ทดสอบตอนเขียนโค้ด
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }));
