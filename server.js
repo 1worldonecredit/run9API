@@ -2576,6 +2576,51 @@ app.get('/api/user/balance/:username', async (req, res) => {
     }
 });
 
+// ==============================================================
+// 🌟 API (Admin): 1. ดึงรายการบัญชีธนาคารทั้งหมด (KYC)
+// ==============================================================
+app.get('/api/admin/kyc', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        const result = await pool.request().query(`
+            SELECT Id, Username, BankName, AccountNumber, AccountName, IsVerified, CreatedAt, Status, BankBookImage, Currency
+            FROM UserBankAccounts
+            ORDER BY CASE WHEN Status = 'PENDING' THEN 1 ELSE 2 END, CreatedAt DESC
+        `);
+        res.json({ success: true, accounts: result.recordset });
+    } catch (err) {
+        console.error("Error fetching KYC:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 API (Admin): 2. อัปเดตสถานะบัญชี (อนุมัติ / ปฏิเสธ)
+// ==============================================================
+app.post('/api/admin/kyc/update', async (req, res) => {
+    const { id, status } = req.body; // status จะส่งมาเป็น 'APPROVED' หรือ 'REJECTED'
+    try {
+        let pool = await sql.connect(config);
+        const isVerified = status === 'APPROVED' ? 1 : 0; // ถ้าอนุมัติให้ IsVerified เป็น 1
+
+        await pool.request()
+            .input('id', sql.Int, id)
+            .input('status', sql.VarChar, status)
+            .input('isVerified', sql.Bit, isVerified)
+            .query(`
+                UPDATE UserBankAccounts 
+                SET Status = @status, IsVerified = @isVerified 
+                WHERE Id = @id
+            `);
+            
+        res.json({ success: true, message: `อัปเดตสถานะเป็น ${status} สำเร็จ` });
+    } catch (err) {
+        console.error("Error updating KYC:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
