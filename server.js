@@ -87,30 +87,41 @@ async function processNewDayGame() {
 }
 
 // ==============================================================
-// 5. API เพิ่มชื่อ นามสกุล (ดึงเฉพาะรูปที่ Active)
+// 🌟 API: บันทึก/อัปเดต ชื่อ-นามสกุล (ลงตาราง UserNames)
 // ==============================================================
-app.post('/update-name', async (req, res) => {
+app.post('/api/user/update-name', async (req, res) => {
     const { username, firstName, lastName } = req.body;
+
     try {
         let pool = await sql.connect(config);
-        // 1. ปรับชื่อเก่าทั้งหมดให้เป็น Inactive
-        await pool.request()
+        
+        // 1. เช็กว่าเคยมีชื่อในระบบหรือยัง
+        const checkName = await pool.request()
             .input('user', sql.VarChar, username)
-            .query("UPDATE UserNames SET Status = 'Inactive' WHERE Username = @user");
+            .query(`SELECT Id FROM UserNames WHERE Username = @user`);
 
-        // 2. Insert ชื่อใหม่ลงไป พร้อมตั้งค่าเป็น Active
-        await pool.request()
-            .input('user', sql.VarChar, username)
-            .input('fname', sql.NVarChar, firstName)
-            .input('lname', sql.NVarChar, lastName)
-            .query("INSERT INTO UserNames (Username, FirstName, LastName, Status) VALUES (@user, @fname, @lname, 'Active')");
+        if (checkName.recordset.length > 0) {
+            // 🔄 มีแล้ว -> อัปเดต และบังคับให้ Status เป็น Active
+            await pool.request()
+                .input('user', sql.VarChar, username)
+                .input('fname', sql.NVarChar, firstName)
+                .input('lname', sql.NVarChar, lastName)
+                .query(`UPDATE UserNames SET FirstName = @fname, LastName = @lname, Status = 'Active' WHERE Username = @user`);
+        } else {
+            // 🆕 ยังไม่มี -> เพิ่มใหม่ พร้อมกำหนด Status เป็น Active
+            await pool.request()
+                .input('user', sql.VarChar, username)
+                .input('fname', sql.NVarChar, firstName)
+                .input('lname', sql.NVarChar, lastName)
+                .query(`INSERT INTO UserNames (Username, FirstName, LastName, Status, CreatedAt) VALUES (@user, @fname, @lname, 'Active', GETDATE())`);
+        }
 
-        res.json({ message: "อัปเดตชื่อ-สกุลสำเร็จ" });
+        res.json({ success: true, message: "บันทึกชื่อ-นามสกุลสำเร็จ!" });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("🔥 Update Name Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
-
 // ==============================================================
 // 🌟 1. CRON JOB: สุ่มเลขรางวัลและทบยอด ทุกเที่ยงคืน (00:00 น.)
 // ==============================================================
@@ -313,19 +324,31 @@ app.post('/api/wallet/bind-bank', async (req, res) => {
         res.status(500).json({ error: "เซิร์ฟเวอร์ขัดข้อง: " + err.message });
     }
 });
-
 // ==============================================================
-// 🌟 API (Admin): ดึงรายชื่อบัญชีธนาคารของระบบทั้งหมด
+// 🌟 API ดึง dropdown list หน้า Profile เพิ่มบัญชีธนาคาร
 // ==============================================================
-app.get('/api/admin/system-banks', async (req, res) => {
+// 🌟 API: ดึงรายชื่อธนาคารทั้งหมด (แบบไม่มีเงื่อนไข เพื่อทดสอบ)
+// ==============================================================
+app.get('/api/system-banks', async (req, res) => {
     try {
         let pool = await sql.connect(config);
-        const result = await pool.request().query("SELECT * FROM SystemBankAccounts ORDER BY CreatedAt DESC");
+        
+        // 🌟 ดึงข้อมูลตรงๆ จากตาราง SystemBanks
+        const result = await pool.request().query(`
+            SELECT Id, BankName, Country 
+            FROM SystemBanks
+            ORDER BY BankName ASC
+        `);
+        
         res.json({ success: true, banks: result.recordset });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error("🔥 Fetch Banks Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
+
+
+
 
 // ==============================================================
 // 🌟 API (Admin): พนักงานเพิ่มบัญชีธนาคารของระบบ (อัปเดตรองรับ Country)
@@ -540,19 +563,7 @@ app.post('/api/admin/transactions/approve', async (req, res) => {
     }
 });
 
-// ==============================================================
-// 🌟 API (User): ซ่อนการแจ้งเตือน (Soft Delete = ปรับ IsHidden)
-// ==============================================================
-app.put('/api/notifications/:id/hide', async (req, res) => {
-    try {
-        let pool = await sql.connect(config);
-        // ไม่ลบข้อมูลทิ้งจริง แต่ปรับ IsHidden = 1 แทน
-        await pool.request()
-            .input('id', sql.Int, req.params.id)
-            .query("UPDATE Notifications SET IsHidden = 1 WHERE Id = @id");
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
+
 
 // ==============================================================
 // 🌟 API (Admin): ดึงสถิติภาพรวมสำหรับหน้า Dashboard
@@ -592,7 +603,7 @@ app.get('/api/admin/dashboard-stats', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API: ดึงรายการแจ้งเตือนที่ยังไม่ถูกซ่อน (IsHidden = 0)
+// 🌟 API (User): ดึงการแจ้งเตือนของฉัน (เฉพาะที่ยังไม่ถูกซ่อน)
 // ==============================================================
 app.get('/api/notifications/:username', async (req, res) => {
     try {
@@ -601,21 +612,27 @@ app.get('/api/notifications/:username', async (req, res) => {
             .input('user', sql.VarChar, req.params.username)
             .query("SELECT * FROM Notifications WHERE Username = @user AND IsHidden = 0 ORDER BY CreatedAt DESC");
         res.json({ success: true, notifications: result.recordset });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 // ==============================================================
-// 🌟 API: ซ่อนการแจ้งเตือน (Soft Delete)
+// 🌟 API (User): ซ่อนการแจ้งเตือน (Soft Delete = เปลี่ยน IsHidden เป็น 1)
 // ==============================================================
 app.put('/api/notifications/:id/hide', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         await pool.request()
             .input('id', sql.Int, req.params.id)
-            .query("UPDATE Notifications SET IsHidden = 1 WHERE Id = @id"); // เปลี่ยนสถานะแทนการลบทิ้ง
-        res.json({ success: true, message: "ลบการแจ้งเตือนแล้ว" });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+            .query("UPDATE Notifications SET IsHidden = 1 WHERE Id = @id");
+        res.json({ success: true, message: "ซ่อนการแจ้งเตือนสำเร็จ" });
+    } catch (err) { 
+        res.status(500).json({ error: err.message }); 
+    }
 });
+
+
 
 // ==============================================================
 // 🌟 4. API: เล่นเกมสอยดาว (จ่ายเงินตามยอดสะสมจริง)
@@ -753,78 +770,64 @@ app.post('/api/game/trigger-new-day', async (req, res) => {
 // ==============================================================
 // 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (แก้ปัญหา Statement ใหม่ไม่ขึ้น)
 // ==============================================================
-app.get('/api/wallet/assets/:userId', async (req, res) => {
+// ==============================================================
+// 🌟 API: ดึงข้อมูลหน้ากระเป๋าเงิน (รับค่า username แทน userId)
+// ==============================================================
+app.get('/api/wallet/assets/:username', async (req, res) => {
+    const username = req.params.username; 
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20; 
+    const offset = (page - 1) * limit;
+
     try {
-        const { userId } = req.params;
-        const { month, page = 1 } = req.query;
-        const limit = 20; 
-        const offset = (page - 1) * limit;
-        
         let pool = await sql.connect(config);
         
-        // 1. ดึงยอดเงิน
-        const walletRes = await pool.request()
-            .input('uid', sql.Int, userId)
-            .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @uid`);
+        // 0. ค้นหา UserId ด้วย Username ที่ส่งมา
+        const userRes = await pool.request()
+            .input('username', sql.VarChar, username)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @username`);
             
-        const walletData = walletRes.recordset.length > 0 ? walletRes.recordset[0] : { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
+        if (userRes.recordset.length === 0) return res.status(404).json({ success: false, message: "User not found" });
+        
+        const userId = userRes.recordset[0].Id; 
 
-        // 🌟 2. ปรับ Query ดึง Statement ให้ฉลาดขึ้น
-        // ใช้ COALESCE เพื่อหาว่าช่องวันที่ช่องไหนมีข้อมูลให้เอาช่องนั้นมาใช้เรียงลำดับและค้นหา
-        let query = `
-            SELECT *, 
-                   COALESCE(CreatedAt, TransactionDate, TransferDate) AS ActualDate 
-            FROM Transactions 
-            WHERE UserId = @uid
-        `;
-        
-        let countQuery = `
-            SELECT COUNT(*) as Total 
-            FROM Transactions 
-            WHERE UserId = @uid
-        `;
-        
-        if (month && month.trim() !== '') {
-            // ใช้ค่า ActualDate ที่เราสร้างขึ้นจำลองมาเช็กเดือน
-            query += ` AND FORMAT(COALESCE(CreatedAt, TransactionDate, TransferDate), 'yyyy-MM') = @month`;
-            countQuery += ` AND FORMAT(COALESCE(CreatedAt, TransactionDate, TransferDate), 'yyyy-MM') = @month`;
-        }
-        
-        // เรียงลำดับจาก ActualDate แทน CreatedAt
-        query += ` ORDER BY ActualDate DESC OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY`;
-        
-        const reqTx = pool.request().input('uid', sql.Int, userId).input('offset', sql.Int, offset).input('limit', sql.Int, limit);
-        const reqCount = pool.request().input('uid', sql.Int, userId);
-        
-        if (month && month.trim() !== '') {
-            reqTx.input('month', sql.VarChar, month);
-            reqCount.input('month', sql.VarChar, month);
-        }
-        
-        const txRes = await reqTx.query(query);
-        const countRes = await reqCount.query(countQuery);
-        const total = countRes.recordset[0].Total;
+        // 1. ดึงกระเป๋าเงิน
+        const walletRes = await pool.request()
+            .input('userId', sql.Int, userId)
+            .query(`SELECT Balance, Currency, LastUpdated FROM Wallets WHERE UserId = @userId`);
+            
+        let wallet = { Balance: 0, Currency: 'THB', LastUpdated: new Date() };
+        if (walletRes.recordset.length > 0) wallet = walletRes.recordset[0];
 
-        // 🌟 3. ปรับแก้ข้อมูลก่อนส่งไป Frontend ให้แสดงวันที่ถูกต้อง
-        const formattedTransactions = txRes.recordset.map(tx => {
-            return {
-                ...tx,
-                // บังคับให้ Frontend ใช้ ActualDate เป็นวันที่แสดงผลหลัก
-                CreatedAt: tx.ActualDate 
-            };
-        });
+        // 🌟 2. ดึง Statement (ไม่มีคำว่า Currency ใน SELECT แล้ว)
+        const txRes = await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('offset', sql.Int, offset)
+            .input('limit', sql.Int, limit)
+            .query(`
+                SELECT 
+                    Id, 
+                    Amount, 
+                    TransactionType, 
+                    Status, 
+                    COALESCE(CreatedAt, TransactionDate, GETDATE()) AS CreatedAt, 
+                    ReferenceId
+                FROM Transactions 
+                WHERE UserId = @userId 
+                ORDER BY COALESCE(CreatedAt, TransactionDate, GETDATE()) DESC 
+                OFFSET @offset ROWS FETCH NEXT @limit ROWS ONLY
+            `);
 
-        res.json({
-            success: true,
-            balance: walletData.Balance,
-            currency: walletData.Currency,      
-            lastUpdated: walletData.LastUpdated,
-            transactions: formattedTransactions,
-            totalPages: Math.ceil(total / limit) || 1,
-            currentPage: parseInt(page)
+        res.json({ 
+            success: true, 
+            balance: wallet.Balance, 
+            currency: wallet.Currency,      
+            lastUpdated: wallet.LastUpdated, 
+            transactions: txRes.recordset,
+            totalPages: 1 
         });
     } catch (err) {
-        console.error("Assets API Error:", err);
+        console.error("🔥 Assets API Error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -920,6 +923,89 @@ app.post('/register', async (req, res) => {
 });
 
 // ==============================================================
+// 🌟 API: ขอรับ OTP (เชื่อมต่อผ่าน Movider Gateway)
+// ==============================================================
+app.post('/api/user/request-otp', async (req, res) => {
+    const { username, phone } = req.body;
+    // สร้าง OTP 6 หลัก
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const smsMessage = `รหัส OTP ของคุณคือ: ${otp} (ห้ามให้รหัสนี้กับบุคคลอื่น)`;
+
+    try {
+        // 1. ยิง API ไปหา Movider (Gateway)
+        const moviderResponse = await fetch('https://api.movider.co/v1/sms', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Authorization': 'Basic ' + Buffer.from('3FJGCCT6ooyRpBAKHQBvLDVghwW:9xms_vfHccJELxMmyMfTWn2u2mEJCR').toString('base64')
+            },
+            body: new URLSearchParams({
+                'to': phone, // เบอร์ปลายทางที่ส่งมา
+                'text': smsMessage,
+                'from': 'K2CLaos' // Sender Name ที่ผ่านการอนุมัติแล้ว
+            })
+        });
+
+        const result = await moviderResponse.json();
+
+        // 2. ถ้าส่ง SMS สำเร็จ ให้บันทึก OTP ลงฐานข้อมูล (เพื่อรอตรวจสอบ)
+        if (moviderResponse.ok || result.success) {
+            let pool = await sql.connect(config);
+            // แนะนำให้คุณสร้างคอลัมน์ TempOTP ในตาราง UsersRegister (หรือตารางแยก) เพื่อเก็บชั่วคราว
+            await pool.request()
+                .input('user', sql.VarChar, username)
+                .input('otp', sql.VarChar, otp)
+                .input('phone', sql.VarChar, phone)
+                .query(`
+                    UPDATE UsersRegister 
+                    SET TempOTP = @otp, TempPhone = @phone 
+                    WHERE Username = @user
+                `);
+            
+            res.json({ success: true, message: 'ส่ง OTP สำเร็จ' });
+        } else {
+            res.status(400).json({ success: false, error: 'Gateway Error: ' + result.error_description });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 API: ยืนยันรหัส OTP และบันทึกเบอร์โทร
+// ==============================================================
+app.post('/api/user/verify-otp', async (req, res) => {
+    const { username, otp, phone } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        
+        // 1. เช็กว่า OTP ตรงกับที่บันทึกไว้ในระบบไหม
+        const result = await pool.request()
+            .input('user', sql.VarChar, username)
+            .query(`SELECT TempOTP FROM UsersRegister WHERE Username = @user`);
+
+        if (result.recordset.length > 0 && result.recordset[0].TempOTP === otp) {
+            // 2. ถ้า OTP ถูกต้อง ให้อัปเดตเบอร์จริงและเปลี่ยนสถานะยืนยัน
+            await pool.request()
+                .input('user', sql.VarChar, username)
+                .input('phone', sql.VarChar, phone)
+                .query(`
+                    UPDATE UsersRegister 
+                    SET PhoneNumber = @phone, IsPhoneVerified = 1, TempOTP = NULL 
+                    WHERE Username = @user
+                `);
+            
+            res.json({ success: true, message: 'ยืนยันเบอร์โทรศัพท์สำเร็จ' });
+        } else {
+            res.status(400).json({ success: false, error: 'รหัส OTP ไม่ถูกต้อง' });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
+// ==============================================================
 // 3. API สำหรับตรวจสอบชื่อผู้แนะนำ (และดึงชื่อ-สกุลจริงจาก UserNames)
 // ==============================================================
 app.post('/check-referral', async (req, res) => {
@@ -986,6 +1072,9 @@ app.post('/check-username', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+
+
 
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
@@ -1139,12 +1228,12 @@ app.get('/api/user/profile-stats', async (req, res) => {
             profileData.LastName = '';
         }
 
-       // 🌟 [แก้ไขจุดนี้] ดึงประวัติบัญชีธนาคารที่ใช้งานปัจจุบันพ่วงคอลัมน์โลโก้
-        const bankRes = await pool.request().input('user', sql.VarChar, username).query(`
-            SELECT BankName, AccountNumber, AccountName, BankLogo 
-            FROM UserBankAccounts 
-            WHERE Username = @user AND Status = 'Active'
-        `);
+       // 🌟 [แก้ไขแล้ว] ดึงประวัติบัญชีธนาคาร (รองรับทั้ง Active และ APPROVED)
+       const bankRes = await pool.request().input('user', sql.VarChar, username).query(`
+           SELECT BankName, AccountNumber, AccountName, BankLogo 
+           FROM UserBankAccounts 
+           WHERE Username = @user AND (Status = 'Active' OR Status = 'APPROVED')
+       `);
         const bankData = bankRes.recordset.length > 0 ? bankRes.recordset[0] : null;
 
         res.json({
@@ -1159,35 +1248,85 @@ app.get('/api/user/profile-stats', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 2. API: บันทึกข้อมูล Profile และรูปภาพ (Base64)
+// 🌟 API: อัปเดตข้อมูลส่วนตัว (รูปโปรไฟล์, เบอร์โทร และ ชื่อ-นามสกุล)
 // ==============================================================
 app.post('/api/user/update-profile', async (req, res) => {
     const { username, imageBase64, firstName, lastName, phone } = req.body;
+
+    if (!username) return res.status(400).json({ error: "ระบุผู้ใช้งาน" });
+
     try {
         let pool = await sql.connect(config);
         
-        // เช็คว่ามีโปรไฟล์หรือยัง
-        const checkRes = await pool.request().input('user', sql.VarChar, username).query(`SELECT Id FROM UserProfiles WHERE Username = @user`);
-        
-        if (checkRes.recordset.length > 0) {
-            await pool.request()
+        // 🌟 เริ่ม Transaction เพื่อให้มั่นใจว่าข้อมูลบันทึกลงทั้ง 2 ตารางอย่างปลอดภัย
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            // -----------------------------------------------------
+            // 1. จัดการตาราง UserProfiles (บันทึก รูปภาพ และ เบอร์โทร)
+            // -----------------------------------------------------
+            const profileCheck = await transaction.request()
                 .input('user', sql.VarChar, username)
-                .input('img', sql.VarChar(sql.MAX), imageBase64)
-                .input('fname', sql.NVarChar, firstName)
-                .input('lname', sql.NVarChar, lastName)
-                .input('phone', sql.VarChar, phone)
-                .query(`UPDATE UserProfiles SET ProfileImageUrl = ISNULL(@img, ProfileImageUrl), FirstName = @fname, LastName = @lname, PhoneNumber = @phone WHERE Username = @user`);
-        } else {
-            await pool.request()
-                .input('user', sql.VarChar, username)
-                .input('img', sql.VarChar(sql.MAX), imageBase64)
-                .input('fname', sql.NVarChar, firstName)
-                .input('lname', sql.NVarChar, lastName)
-                .input('phone', sql.VarChar, phone)
-                .query(`INSERT INTO UserProfiles (Username, ProfileImageUrl, FirstName, LastName, PhoneNumber, Status) VALUES (@user, @img, @fname, @lname, @phone, 'Active')`);
+                .query(`SELECT Id FROM UserProfiles WHERE Username = @user`);
+
+            if (profileCheck.recordset.length > 0) {
+                // มีข้อมูลแล้ว ให้อัปเดต (ถ้าอันไหนไม่ได้ส่งมา ให้คงค่าเดิมไว้ด้วย ISNULL)
+                await transaction.request()
+                    .input('user', sql.VarChar, username)
+                    .input('img', sql.NVarChar(sql.MAX), imageBase64 || null)
+                    .input('phone', sql.VarChar, phone || null)
+                    .query(`
+                        UPDATE UserProfiles 
+                        SET 
+                            ProfileImageUrl = ISNULL(@img, ProfileImageUrl), 
+                            PhoneNumber = ISNULL(@phone, PhoneNumber) 
+                        WHERE Username = @user
+                    `);
+            } else {
+                // ยังไม่มี ให้เพิ่มใหม่
+                await transaction.request()
+                    .input('user', sql.VarChar, username)
+                    .input('img', sql.NVarChar(sql.MAX), imageBase64 || '')
+                    .input('phone', sql.VarChar, phone || '')
+                    .query(`INSERT INTO UserProfiles (Username, ProfileImageUrl, PhoneNumber) VALUES (@user, @img, @phone)`);
+            }
+
+            // -----------------------------------------------------
+            // 2. จัดการตาราง UserNames (บันทึก ชื่อ-นามสกุล และบังคับ Status = 'Active')
+            // -----------------------------------------------------
+            if (firstName !== undefined && lastName !== undefined) {
+                const nameCheck = await transaction.request()
+                    .input('user', sql.VarChar, username)
+                    .query(`SELECT Id FROM UserNames WHERE Username = @user`);
+
+                if (nameCheck.recordset.length > 0) {
+                    // มีข้อมูลแล้ว ให้อัปเดตและบังคับ Active
+                    await transaction.request()
+                        .input('user', sql.VarChar, username)
+                        .input('fname', sql.NVarChar, firstName)
+                        .input('lname', sql.NVarChar, lastName)
+                        .query(`UPDATE UserNames SET FirstName = @fname, LastName = @lname, Status = 'Active' WHERE Username = @user`);
+                } else {
+                    // ยังไม่มี ให้เพิ่มใหม่และบังคับ Active
+                    await transaction.request()
+                        .input('user', sql.VarChar, username)
+                        .input('fname', sql.NVarChar, firstName)
+                        .input('lname', sql.NVarChar, lastName)
+                        .query(`INSERT INTO UserNames (Username, FirstName, LastName, Status, CreatedAt) VALUES (@user, @fname, @lname, 'Active', GETDATE())`);
+                }
+            }
+
+            await transaction.commit();
+            res.json({ success: true, message: "บันทึกข้อมูลส่วนตัวสำเร็จ" });
+
+        } catch (err) {
+            await transaction.rollback();
+            throw err;
         }
-        res.json({ success: true, message: "บันทึกข้อมูลส่วนตัวสำเร็จ!" });
+
     } catch (err) {
+        console.error("🔥 Update Profile Error:", err.message);
         res.status(500).json({ error: err.message });
     }
 });
@@ -1245,6 +1384,9 @@ app.post('/api/user/bank', async (req, res) => {
 // ==============================================================
 // 🌟 API ดึงรายชื่อธนาคาร คัดกรองตามประเทศ (TH/LA) ของ User
 // ==============================================================
+// ==============================================================
+// 🌟 API ดึงรายชื่อธนาคาร คัดกรองตามประเทศ (TH/LA) แบบแม่นยำ 100%
+// ==============================================================
 app.get('/api/system/banks', async (req, res) => {
     const { username } = req.query;
     if (!username) return res.status(400).json({ error: "ระบุผู้ใช้งาน" });
@@ -1252,20 +1394,25 @@ app.get('/api/system/banks', async (req, res) => {
     try {
         let pool = await sql.connect(config);
 
-        // 1. ตรวจสอบสัญชาติ (Country) ของ User จากตาราง UsersRegister
+        // 1. ดึงข้อมูลประเทศของผู้ใช้งาน
         const userRes = await pool.request()
             .input('user', sql.VarChar, username)
             .query(`SELECT Country FROM UsersRegister WHERE Username = @user`);
 
-        // ตั้งค่าเริ่มต้นเป็น 'TH' (ไทย) ไว้ก่อนเผื่อหาข้อมูลไม่พบ
-        let userCountry = 'TH'; 
+        // 2. แปลงชื่อประเทศให้ตรงกับตาราง SystemBanks (TH หรือ LA)
+        let dbCountry = 'TH'; // ค่าเริ่มต้น
         if (userRes.recordset.length > 0 && userRes.recordset[0].Country) {
-            userCountry = userRes.recordset[0].Country;
+            let rawCountry = userRes.recordset[0].Country.toLowerCase();
+            if (rawCountry.includes('lao') || rawCountry.includes('ลาว')) {
+                dbCountry = 'LA';
+            } else if (rawCountry.includes('thai') || rawCountry.includes('ไทย')) {
+                dbCountry = 'TH';
+            }
         }
 
-        // 2. ดึงรายชื่อธนาคารและโลโก้ เฉพาะที่ตรงกับประเทศ (Country) ของ User และเปิดใช้งานอยู่ (IsActive = 1)
+        // 3. ดึงธนาคารเฉพาะประเทศนั้นๆ
         const result = await pool.request()
-            .input('country', sql.VarChar, userCountry)
+            .input('country', sql.VarChar, dbCountry)
             .query(`
                 SELECT BankCode, BankName, BankLogo 
                 FROM SystemBanks 
@@ -1278,6 +1425,7 @@ app.get('/api/system/banks', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
 // ==============================================================
 // 🌟 [FRONTEND API] ลูกค้าเพิ่มบัญชีธนาคาร พร้อมแนบรูปสมุดบัญชี (รอ KYC)
 // ==============================================================
@@ -1528,11 +1676,23 @@ app.post('/api/admin/statements', async (req, res) => {
                     .input('stmtId', sql.Int, statementId)
                     .query(`UPDATE SystemStatements SET Status = 'MATCHED' WHERE Id = @stmtId`);
 
-                // 3.3 💰 เติมเงินเข้ากระเป๋า Wallet ผู้เล่น
+               // 3.3 💰 เติมเงินเข้ากระเป๋า Wallet ผู้เล่น (รองรับผู้ใช้ใหม่)
                 await transaction.request()
                     .input('uid', sql.Int, userId)
                     .input('amt', sql.Decimal(18,4), amount)
-                    .query(`UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @amt WHERE UserId = @uid`);
+                    .query(`
+                        IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @uid)
+                        BEGIN
+                            UPDATE Wallets 
+                            SET Balance = ISNULL(Balance, 0) + @amt, LastUpdated = GETDATE() 
+                            WHERE UserId = @uid;
+                        END
+                        ELSE
+                        BEGIN
+                            INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated)
+                            VALUES (@uid, @amt, 'THB', GETDATE());
+                        END
+                    `);
 
                 // 3.4 แจ้งเตือนผู้เล่น
                 const userRes = await transaction.request()
@@ -1882,10 +2042,530 @@ app.post('/api/game/play', async (req, res) => {
     }
 });
 
+// ==============================================================
+// 🌟 API: สร้างคำขอฝากเงิน (ห้ามทำรายการซ้อน)
+// ==============================================================
+app.post('/api/p2p/create-order', async (req, res) => {
+    const { username, amount, orderType } = req.body; 
+
+    try {
+        let pool = await sql.connect(config);
+        
+        // 1. หา RequesterId และ สกุลเงิน (Currency) ของผู้ใช้งาน
+        // 🌟 อัปเดต: JOIN กับ UserBankAccounts เพื่อดึง Currency มาด้วย
+        const userRes = await pool.request()
+            .input('username', sql.VarChar, username)
+            .query(`
+                SELECT u.Id, b.Currency 
+                FROM UsersRegister u
+                LEFT JOIN UserBankAccounts b ON u.Username = b.Username AND (b.Status = 'Active' OR b.Status = 'APPROVED')
+                WHERE u.Username = @username
+            `);
+            
+        if (userRes.recordset.length === 0) return res.status(404).json({ success: false, message: "ไม่พบผู้ใช้งาน" });
+        const requesterId = userRes.recordset[0].Id;
+        // 🌟 หากไม่มีบัญชีธนาคาร (หรือไม่มีข้อมูลสกุลเงิน) ให้ใช้ 'THB' เป็นค่าเริ่มต้น
+        const userCurrency = userRes.recordset[0].Currency || 'THB'; 
+
+        // 🌟 2. เช็กว่ามีคำขอที่ยัง PENDING อยู่หรือไม่ (ป้องกันสแปม)
+        // (คงระยะเวลา 60 นาทีไว้ตามโค้ดเดิมของคุณ)
+        const pendingCheckRes = await pool.request()
+            .input('uid', sql.Int, requesterId)
+            .query(`
+                SELECT COUNT(*) as PendingCount 
+                FROM P2P_Orders 
+                WHERE RequesterId = @uid 
+                AND Status = 'PENDING' 
+                AND DATEDIFF(MINUTE, CreatedAt, GETDATE()) <= 10
+            `);
+            
+        if (pendingCheckRes.recordset[0].PendingCount > 0) {
+             return res.status(400).json({ success: false, message: "คุณมีคำขอฝากเงินที่กำลังรอดำเนินการอยู่ กรุณารอสักครู่ก่อนทำรายการใหม่" });
+        }
+
+        // 3. ดึงค่าธรรมเนียม
+        const feeRes = await pool.request()
+            .input('amount', sql.Decimal, amount)
+            .query(`SELECT FeePercentage FROM P2P_FeeTiers WHERE @amount >= MinAmount AND @amount <= MaxAmount`);
+            
+        if (feeRes.recordset.length === 0) return res.status(400).json({ success: false, message: "ไม่พบข้อมูลเรทค่าธรรมเนียม" });
+
+        const feePercent = feeRes.recordset[0].FeePercentage;
+        const feeAmount = (amount * feePercent) / 100;
+
+        // 4. บันทึกคำขอ
+        // 🌟 อัปเดต: เพิ่มการบันทึก Currency ลงใน P2P_Orders ด้วย
+        await pool.request()
+            .input('type', sql.VarChar, orderType)
+            .input('uid', sql.Int, requesterId)
+            .input('amt', sql.Decimal, amount)
+            .input('fee', sql.Decimal, feeAmount)
+            .input('currency', sql.VarChar, userCurrency) // 🌟 เพิ่มพารามิเตอร์นี้
+            .query(`
+                INSERT INTO P2P_Orders (OrderType, RequesterId, Amount, FeeAmount, Status, Currency)
+                VALUES (@type, @uid, @amt, @fee, 'PENDING', @currency)
+            `);
+
+        res.json({ success: true, message: "สร้างคำขอสำเร็จ", feeCharged: feeAmount });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.get('/api/p2p/orders/pending', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        
+        // โค้ดดั้งเดิมของคุณแบบเพียวๆ (ไม่กรองประเทศ ไม่ตัดเวลา)
+        let queryStr = `
+            SELECT 
+                o.Id, 
+                o.OrderType, 
+                o.Amount, 
+                o.FeeAmount, 
+                o.CreatedAt,
+                u.Username
+            FROM P2P_Orders o
+            JOIN UsersRegister u ON o.RequesterId = u.Id
+            WHERE o.Status = 'PENDING'
+            ORDER BY o.CreatedAt DESC
+        `;
+
+        const result = await pool.request().query(queryStr);
+        res.json({ success: true, orders: result.recordset });
+
+    } catch (err) {
+        // ส่ง Error ออกมาให้เห็นใน Network -> Response
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+// ==============================================================
+// 🌟 API P2P: ดึงรายการ P2P ของฉัน (My Orders)
+// ==============================================================
+app.get('/api/p2p/my-orders/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        
+        // 1. หา UserId ก่อน
+        const userRes = await pool.request()
+            .input('user', sql.VarChar, username)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @user`);
+            
+        if (userRes.recordset.length === 0) return res.status(404).json({error: 'ไม่พบผู้ใช้งาน'});
+        const userId = userRes.recordset[0].Id;
+
+        // 2. ดึงรายการที่ตัวเองเป็น Requester (คนฝาก) หรือ MatchedUser (คนรับงาน)
+        const ordersRes = await pool.request()
+            .input('uid', sql.Int, userId)
+            .query(`
+                SELECT 
+                    Id, OrderType, Amount, Status, CreatedAt, Currency,
+                    CASE WHEN RequesterId = @uid THEN 'REQUESTER' ELSE 'MATCHER' END as MyRole
+                FROM P2P_Orders
+                WHERE RequesterId = @uid OR MatchedUserId = @uid
+                ORDER BY CreatedAt DESC
+            `);
+            
+        res.json({ success: true, orders: ordersRes.recordset });
+    } catch (err) {
+        console.error("🔥 Fetch My Orders Error:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
 
 
+// ==============================================================
+// 🌟 API: ดึงข้อมูลบัญชีธนาคารของผู้ใช้ (สำหรับหน้า P2P TopUp)
+// ==============================================================
+app.get('/api/user/bank-account/:username', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        const result = await pool.request()
+            .input('username', sql.VarChar, req.params.username)
+            .query(`
+                SELECT TOP 1 BankName, AccountNumber 
+                FROM UserBankAccounts 
+                WHERE Username = @username AND Status = 'APPROVED' 
+                ORDER BY CreatedAt DESC
+            `);
+            
+        if (result.recordset.length > 0) {
+            res.json({ success: true, bank: result.recordset[0] });
+        } else {
+            res.json({ success: false, message: 'ยังไม่มีบัญชีที่อนุมัติแล้ว' });
+        }
+    } catch (err) {
+        console.error("Fetch Bank Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
+// ==============================================================
+// 🌟 API: กดรับงาน P2P (หักเงิน Escrow + สร้างรหัสยืนยัน)
+// ==============================================================
+app.post('/api/p2p/match-order', async (req, res) => {
+    const { orderId, matchedUsername } = req.body;
+
+    try {
+        let pool = await sql.connect(config);
+        
+        // หา UserId ของคนที่กดรับงานก่อน
+        const userRes = await pool.request()
+            .input('user', sql.VarChar, matchedUsername)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @user`);
+            
+        if (userRes.recordset.length === 0) return res.status(404).json({ error: "ไม่พบผู้ใช้งานรับงาน" });
+        const matchedUserId = userRes.recordset[0].Id;
+
+        // 🌟 เริ่ม Transaction (ป้องกันคนกดพร้อมกัน แย่งงานกัน)
+        const transaction = new sql.Transaction(pool);
+        await transaction.begin();
+
+        try {
+            // 1. เช็กสถานะงาน (ใช้ UPDLOCK ล็อกแถวนี้ไว้ชั่วคราว ป้องกันการแย่งข้อมูล)
+            // 🌟 แก้ไข: เพิ่มการคำนวณ DiffMinutes จากฝั่ง SQL โดยตรง เพื่อเลี่ยงปัญหา Timezone
+            const orderCheck = await transaction.request()
+                .input('oId', sql.Int, orderId)
+                .query(`
+                    SELECT Amount, Status, RequesterId, CreatedAt, 
+                    DATEDIFF(MINUTE, CreatedAt, GETDATE()) AS DiffMinutes 
+                    FROM P2P_Orders WITH (UPDLOCK) 
+                    WHERE Id = @oId
+                `);
+                
+            if (orderCheck.recordset.length === 0) throw new Error("ไม่พบรายการนี้");
+            const orderData = orderCheck.recordset[0];
+            
+            // 🌟 ตรวจสอบว่าเกิน 5 นาทีหรือยัง (ใช้ค่าเวลาจาก Database ล้วนๆ)
+            if (orderData.DiffMinutes > 5) {
+                 await transaction.request()
+                    .input('oId', sql.Int, orderId)
+                    .query(`UPDATE P2P_Orders SET Status = 'EXPIRED' WHERE Id = @oId`);
+                 throw new Error("คำขอนี้หมดอายุแล้ว (เกิน 5 นาที)");
+            }
+                
+            if (orderData.Status !== 'PENDING') {
+                throw new Error("งานนี้มีผู้ใช้งานอื่นรับไปแล้ว ยังมีงานอื่นรอคุณ ขอบคุณที่ใช้บริการ");
+            }
+
+            if (orderData.RequesterId === matchedUserId) {
+                throw new Error("คุณไม่สามารถรับงานของตัวเองได้");
+            }
+
+            // 2. เช็กยอดเงินในกระเป๋าของคนที่กดรับงาน
+            const walletCheck = await transaction.request()
+                .input('uid', sql.Int, matchedUserId)
+                .query(`SELECT Balance FROM Wallets WHERE UserId = @uid`);
+                
+            const balance = walletCheck.recordset.length > 0 ? walletCheck.recordset[0].Balance : 0;
+            if (balance < orderData.Amount) {
+                throw new Error("ยอดเงินในกระเป๋าของคุณไม่เพียงพอสำหรับการรับงานนี้");
+            }
+
+            // 3. 💸 หักเงินเข้าสู่ระบบ Escrow (ลบเงินจากกระเป๋าคนรับงาน)
+            await transaction.request()
+                .input('uid', sql.Int, matchedUserId)
+                .input('amt', sql.Decimal(18,4), orderData.Amount)
+                .query(`UPDATE Wallets SET Balance = Balance - @amt WHERE UserId = @uid`);
+
+            // 4. 🔑 สร้างรหัสยืนยัน 6 หลักสุ่ม (เช่น X7B9Q2)
+            const confirmationCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+            // 5. อัปเดตสถานะงานเป็น MATCHED
+            await transaction.request()
+                .input('oId', sql.Int, orderId)
+                .input('mId', sql.Int, matchedUserId)
+                .input('code', sql.VarChar, confirmationCode)
+                .query(`
+                    UPDATE P2P_Orders 
+                    SET Status = 'MATCHED', MatchedUserId = @mId, ConfirmationCode = @code, MatchedAt = GETDATE()
+                    WHERE Id = @oId
+                `);
+
+            // (ถ้ามีระบบ Notification สามารถแทรกคำสั่ง INSERT แจ้งเตือนผู้ฝากเงินได้ที่นี่)
+
+            await transaction.commit();
+            res.json({ success: true, message: "รับงานสำเร็จ! กรุณารอผู้ฝากโอนเงิน", confirmationCode: confirmationCode });
+
+        } catch (err) {
+            await transaction.rollback();
+            throw err; // ส่ง error ออกไปให้ catch ตัวนอก
+        }
+
+    } catch (err) {
+        res.status(400).json({ success: false, message: err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 API P2P (Step 3): ผู้ฝากเงินอัปโหลดสลิป
+// ==============================================================
+app.post('/api/p2p/upload-slip', async (req, res) => {
+    // รับค่าที่หน้าบ้านส่งมา
+    const { orderId, slipBase64, transferAmount, transferDate, transferTime } = req.body;
+
+    try {
+        let pool = await sql.connect(config);
+        const request = pool.request();
+
+        // ผูกตัวแปร
+        request.input('orderId', sql.Int, orderId);
+        request.input('slipUrl', sql.NVarChar(sql.MAX), slipBase64);
+
+        // 🌟 แก้ไขแล้ว: เอา UpdatedAt = GETDATE() ที่เป็นตัวการทำให้ Error ออก
+        const queryStr = `
+            UPDATE P2P_Orders
+            SET Status = 'SLIP_UPLOADED', 
+                SlipUrl = @slipUrl
+            WHERE Id = @orderId
+        `;
+
+        await request.query(queryStr);
+        res.json({ success: true, message: 'Upload slip successfully' });
+
+    } catch (err) {
+        console.error("🔥 Error Uploading Slip:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
  
+
+// ==============================================================
+// 🌟 API P2P: ผู้รับงานยืนยันได้รับเงิน (กระจายเงิน + จ่าย 5% + สร้างประวัติ)
+// ==============================================================
+app.post('/api/p2p/confirm-receipt', async (req, res) => {
+    const { orderId } = req.body;
+    let pool = await sql.connect(config);
+    const transaction = new sql.Transaction(pool);
+
+    try {
+        await transaction.begin();
+        
+        const reqOrder = new sql.Request(transaction);
+        reqOrder.input('id', sql.Int, orderId);
+        const orderRes = await reqOrder.query(`
+            SELECT 
+                o.*, 
+                req.Username AS RequesterUsername, 
+                match.Username AS MatcherUsername,
+                match.ReferralUsername AS MatcherReferralUsername
+            FROM P2P_Orders o
+            LEFT JOIN UsersRegister req ON o.RequesterId = req.Id
+            LEFT JOIN UsersRegister match ON o.MatchedUserId = match.Id
+            WHERE o.Id = @id AND o.Status = 'SLIP_UPLOADED'
+        `);
+            
+        if (orderRes.recordset.length === 0) {
+            throw new Error("ไม่พบรายการ หรือสถานะไม่ถูกต้อง (อาจมีการอนุมัติไปแล้ว)");
+        }
+        
+        const order = orderRes.recordset[0];
+        const reqUserId = order.RequesterId;
+        const matchUserId = order.MatchedUserId;
+        const requesterUsername = order.RequesterUsername; 
+        const matcherUsername = order.MatcherUsername; 
+        const referrerUsername = order.MatcherReferralUsername;
+        
+        const amount = order.Amount; 
+        const feeAmount = order.FeeAmount; 
+        const refCode = `P2P-${orderId}`; 
+
+        // =========================================================
+        // 🌟 2. อัปเดตเงินเข้ากระเป๋า (ใช้ระบบ IF EXISTS กันบั๊ก User ใหม่)
+        // =========================================================
+        
+        // 2.1 ผู้ฝากเงิน (Requester)
+        const reqWallet1 = new sql.Request(transaction);
+        reqWallet1.input('reqUserId', sql.Int, reqUserId);
+        reqWallet1.input('amount', sql.Decimal(18, 4), amount);
+        await reqWallet1.query(`
+            IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @reqUserId)
+                UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @amount, LastUpdated = GETDATE() WHERE UserId = @reqUserId;
+            ELSE
+                INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated) VALUES (@reqUserId, @amount, 'THB', GETDATE());
+        `);
+
+        // 2.2 ผู้รับงาน (Matcher) ได้ค่าธรรมเนียม
+        const reqWallet2 = new sql.Request(transaction);
+        reqWallet2.input('matchUserId', sql.Int, matchUserId);
+        reqWallet2.input('fee', sql.Decimal(18, 4), feeAmount);
+        await reqWallet2.query(`
+            IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @matchUserId)
+                UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @fee, LastUpdated = GETDATE() WHERE UserId = @matchUserId;
+            ELSE
+                INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated) VALUES (@matchUserId, @fee, 'THB', GETDATE());
+        `);
+
+        // =========================================================
+        // 🌟 3. บันทึกประวัติ (Transactions)
+        // =========================================================
+        const reqTrans1 = new sql.Request(transaction);
+        reqTrans1.input('reqUserId', sql.Int, reqUserId);
+        reqTrans1.input('amount', sql.Decimal(18, 4), amount);
+        reqTrans1.input('ref', sql.VarChar, `${refCode}_DEP`);
+        await reqTrans1.query(`INSERT INTO Transactions (UserId, TransactionType, Amount, Status, ReferenceId, CreatedAt) VALUES (@reqUserId, 'DEPOSIT', @amount, 'COMPLETED', @ref, GETDATE())`);
+
+        const reqTrans2 = new sql.Request(transaction);
+        reqTrans2.input('matchUserId', sql.Int, matchUserId);
+        reqTrans2.input('fee', sql.Decimal(18, 4), feeAmount);
+        reqTrans2.input('ref', sql.VarChar, `${refCode}_FEE`);
+        await reqTrans2.query(`INSERT INTO Transactions (UserId, TransactionType, Amount, Status, ReferenceId, CreatedAt) VALUES (@matchUserId, 'P2P_FEE', @fee, 'COMPLETED', @ref, GETDATE())`);
+
+        // ==========================================================
+        // 🌟 4. ระบบจ่าย Affiliate 5% ให้ผู้แนะนำ
+        // ==========================================================
+        if (referrerUsername) {
+            const affiliateFee = feeAmount * 0.05;
+
+            const reqAffWallet = new sql.Request(transaction);
+            reqAffWallet.input('affUser', sql.NVarChar, referrerUsername);
+            reqAffWallet.input('affFee', sql.Decimal(18, 4), affiliateFee);
+            // โอนเงินเข้ากระเป๋าผู้แนะนำ (รองรับผู้แนะนำที่เป็น User ใหม่เช่นกัน)
+            await reqAffWallet.query(`
+                DECLARE @affUserId INT = (SELECT Id FROM UsersRegister WHERE Username = @affUser);
+                IF EXISTS (SELECT 1 FROM Wallets WHERE UserId = @affUserId)
+                    UPDATE Wallets SET Balance = ISNULL(Balance, 0) + @affFee, LastUpdated = GETDATE() WHERE UserId = @affUserId;
+                ELSE
+                    INSERT INTO Wallets (UserId, Balance, Currency, LastUpdated) VALUES (@affUserId, @affFee, 'THB', GETDATE());
+            `);
+
+            const reqAffTrans = new sql.Request(transaction);
+            reqAffTrans.input('affUser', sql.NVarChar, referrerUsername);
+            reqAffTrans.input('affFee', sql.Decimal(18, 4), affiliateFee);
+            reqAffTrans.input('ref', sql.VarChar, `${refCode}_AFF`);
+            await reqAffTrans.query(`INSERT INTO Transactions (UserId, TransactionType, Amount, Status, ReferenceId, CreatedAt) VALUES ((SELECT Id FROM UsersRegister WHERE Username = @affUser), 'AFFILIATE_FEE', @affFee, 'COMPLETED', @ref, GETDATE())`);
+        }
+
+        // =========================================================
+        // 🌟 5. อัปเดตสถานะออเดอร์เป็น COMPLETED
+        // =========================================================
+        const reqUpdateOrder = new sql.Request(transaction);
+        reqUpdateOrder.input('id', sql.Int, orderId);
+        await reqUpdateOrder.query(`UPDATE P2P_Orders SET Status = 'COMPLETED', CompletedAt = GETDATE() WHERE Id = @id`);
+
+        // =========================================================
+        // 🔔 6. ระบบแจ้งเตือน (Notifications) 
+        // =========================================================
+        const reqNotif1 = new sql.Request(transaction);
+        reqNotif1.input('reqNotifUser', sql.NVarChar, requesterUsername);
+        reqNotif1.input('reqNotifTitle', sql.NVarChar, 'รายการ P2P สำเร็จ 🎉');
+        reqNotif1.input('reqNotifMsg', sql.NVarChar, `คำขอเติมเงินจำนวน ${amount} สำเร็จแล้ว! ยอดเงินเข้ากระเป๋าของคุณเรียบร้อย`);
+        await reqNotif1.query(`INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) VALUES (@reqNotifUser, @reqNotifTitle, @reqNotifMsg, 0, GETDATE())`);
+
+        const reqNotif2 = new sql.Request(transaction);
+        reqNotif2.input('matchNotifUser', sql.NVarChar, matcherUsername);
+        reqNotif2.input('matchNotifTitle', sql.NVarChar, 'รับค่าธรรมเนียม P2P 💰');
+        reqNotif2.input('matchNotifMsg', sql.NVarChar, `คุณได้รับค่าธรรมเนียม ${feeAmount} จากการรับงาน P2P สำเร็จ`);
+        await reqNotif2.query(`INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) VALUES (@matchNotifUser, @matchNotifTitle, @matchNotifMsg, 0, GETDATE())`);
+
+        if (referrerUsername) {
+            const affiliateFee = feeAmount * 0.05;
+            const reqNotif3 = new sql.Request(transaction);
+            reqNotif3.input('affNotifUser', sql.NVarChar, referrerUsername);
+            reqNotif3.input('affNotifTitle', sql.NVarChar, 'ได้รับค่านายหน้า 5% 🎁');
+            reqNotif3.input('affNotifMsg', sql.NVarChar, `คุณได้รับค่านายหน้า ${affiliateFee} จากทีมงาน (${matcherUsername}) ที่ทำรายการ P2P สำเร็จ`);
+            await reqNotif3.query(`INSERT INTO Notifications (Username, Title, Message, IsRead, CreatedAt) VALUES (@affNotifUser, @affNotifTitle, @affNotifMsg, 0, GETDATE())`);
+        }
+
+        await transaction.commit();
+        res.json({ success: true, message: "กระทบยอดและกระจายรายได้สำเร็จเรียบร้อย" });
+
+    } catch (err) {
+        await transaction.rollback();
+        console.error("🔥 Error in P2P Confirm Receipt:", err.message);
+        res.status(500).json({ success: false, error: "เกิดข้อผิดพลาดในการกระจายเงิน: " + err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 API P2P: ดึงรายละเอียด Order 1 รายการ (สำหรับหน้า P2POrderDetail)
+// ==============================================================
+app.get('/api/p2p/order/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        const orderRes = await pool.request()
+            .input('id', sql.Int, id)
+            .query(`
+                SELECT 
+                    o.*, 
+                    reqU.Username AS RequesterUsername, 
+                    matchU.Username AS MatchedUsername,
+                    b.BankName, b.AccountNumber, b.AccountName, b.BankLogo
+                FROM P2P_Orders o
+                LEFT JOIN UsersRegister reqU ON o.RequesterId = reqU.Id
+                LEFT JOIN UsersRegister matchU ON o.MatchedUserId = matchU.Id
+                LEFT JOIN UserBankAccounts b ON matchU.Username = b.Username AND (b.Status = 'Active' OR b.Status = 'APPROVED')
+                WHERE o.Id = @id
+            `);
+            
+        if (orderRes.recordset.length === 0) {
+            return res.status(404).json({ success: false, message: "ไม่พบรายการ" });
+        }
+        
+        res.json({ success: true, order: orderRes.recordset[0] });
+    } catch (err) {
+        console.error("🔥 Fetch Order Detail Error:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+// ==============================================================
+// 🌟 API: ดึงประวัติรายการ P2P (แก้ปัญหา Role สลับฝั่งในหน้าประวัติ)
+// ==============================================================
+app.get('/api/p2p/my-orders/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        const request = pool.request();
+        request.input('user', sql.NVarChar, username);
+
+        // ใช้ JOIN ดึงชื่อ RequesterUsername และ MatcherUsername ออกมาให้หน้าบ้านเปรียบเทียบ
+        const queryStr = `
+            SELECT 
+                o.*, 
+                req.Username AS RequesterUsername, 
+                match.Username AS MatcherUsername
+            FROM P2P_Orders o
+            LEFT JOIN UsersRegister req ON o.RequesterId = req.Id
+            LEFT JOIN UsersRegister match ON o.MatchedUserId = match.Id
+            WHERE req.Username = @user OR match.Username = @user 
+            ORDER BY o.CreatedAt DESC
+        `;
+        
+        const result = await request.query(queryStr);
+        res.json({ success: true, orders: result.recordset });
+
+    } catch (err) {
+        console.error("🔥 Error fetching my orders:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 API: ดึงยอดเงินล่าสุดของผู้ใช้งาน (Wallet Balance)
+// ==============================================================
+app.get('/api/user/balance/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        const result = await pool.request()
+            .input('username', sql.NVarChar, username)
+            .query(`SELECT Wallets FROM UsersRegister WHERE Username = @username`);
+            
+        if (result.recordset.length > 0) {
+            // ดึงยอดเงินมา ถ้าเป็น null ให้ตีเป็น 0
+            const balance = result.recordset[0].Wallets || 0; 
+            res.json({ success: true, balance: balance });
+        } else {
+            res.status(404).json({ success: false, error: "ไม่พบผู้ใช้งาน" });
+        }
+    } catch (err) {
+        console.error("🔥 Error fetching balance:", err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
