@@ -1335,7 +1335,8 @@ app.post('/api/user/update-profile', async (req, res) => {
 // 🌟 [แยก API เฉพาะ] สำหรับบันทึกบัญชีธนาคารผู้ใช้ (Insert ใหม่, ของเก่า Inactive)
 // ==============================================================
 app.post('/api/user/bank', async (req, res) => {
-    const { username, bankCode, accNumber, accName } = req.body;
+    // 🌟 1. เพิ่มการรับค่า bankBookImage จากหน้าบ้าน
+    const { username, bankCode, accNumber, accName, bankBookImage } = req.body;
     
     if (!username || !bankCode || !accNumber || !accName) {
         return res.status(400).json({ error: "กรุณากรอกข้อมูลบัญชีธนาคารให้ครบถ้วน" });
@@ -1347,7 +1348,7 @@ app.post('/api/user/bank', async (req, res) => {
         await transaction.begin();
 
         try {
-            // สเต็ปที่ 1: เปลี่ยนสถานะบัญชีเดิมทั้งหมดของ User นี้ ให้เป็น 'Inactive' (เพื่อเก็บเป็นประวัติย้อนหลัง)
+            // สเต็ปที่ 1: เปลี่ยนสถานะบัญชีเดิมทั้งหมดของ User นี้ ให้เป็น 'Inactive'
             await transaction.request()
                 .input('user', sql.VarChar, username)
                 .query(`UPDATE UserBankAccounts SET Status = 'Inactive' WHERE Username = @user`);
@@ -1359,19 +1360,30 @@ app.post('/api/user/bank', async (req, res) => {
             
             const fullBankName = bankMasterRes.recordset.length > 0 ? bankMasterRes.recordset[0].BankName : bankCode;
 
-            // สเต็ปที่ 2: Insert บัญชีใหม่เข้าตาราง โดยตั้งสถานะเป็น 'Active' เสมอ
+            // 🌟 2. เช็กสกุลเงินอัตโนมัติ (ถ้าเป็นธนาคารลาว ให้เป็น LAK)
+            const isLaosBank = bankCode.toUpperCase().includes('BCEL') || 
+                               bankCode.toUpperCase().includes('JDB') || 
+                               bankCode.toUpperCase().includes('LDB') || 
+                               fullBankName.includes('ลาว');
+            const currency = isLaosBank ? 'LAK' : 'THB';
+
+            // สเต็ปที่ 2: Insert บัญชีใหม่เข้าตาราง
+            // 🌟 3. เปลี่ยน Status เป็น 'PENDING' และเพิ่ม BankBookImage กับ Currency
             await transaction.request()
                 .input('user', sql.VarChar, username)
                 .input('bname', sql.NVarChar, fullBankName)
                 .input('accno', sql.VarChar, accNumber)
                 .input('accname', sql.NVarChar, accName)
+                .input('bookImg', sql.NVarChar(sql.MAX), bankBookImage || null) // บันทึกรูป (ถ้ามี)
+                .input('currency', sql.VarChar, currency)
                 .query(`
-                    INSERT INTO UserBankAccounts (Username, BankName, AccountNumber, AccountName, IsVerified, Status, CreatedAt) 
-                    VALUES (@user, @bname, @accno, @accname, 0, 'Active', GETUTCDATE())
+                    INSERT INTO UserBankAccounts 
+                    (Username, BankName, AccountNumber, AccountName, IsVerified, Status, CreatedAt, BankBookImage, Currency) 
+                    VALUES (@user, @bname, @accno, @accname, 0, 'PENDING', GETUTCDATE(), @bookImg, @currency)
                 `);
 
             await transaction.commit();
-            res.json({ success: true, message: "🎁 บันทึกบัญชีธนาคารใหม่สำเร็จ และเก็บประวัติบัญชีเก่าเรียบร้อยแล้ว!" });
+            res.json({ success: true, message: "🎁 ส่งคำขอเพิ่มบัญชีธนาคารสำเร็จ กรุณารอแอดมินตรวจสอบ!" });
         } catch (err) {
             await transaction.rollback();
             throw err;
