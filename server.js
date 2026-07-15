@@ -2224,7 +2224,6 @@ app.post('/api/p2p/match-order', async (req, res) => {
 
         try {
             // 1. เช็กสถานะงาน (ใช้ UPDLOCK ล็อกแถวนี้ไว้ชั่วคราว ป้องกันการแย่งข้อมูล)
-            // 🌟 แก้ไข: เพิ่มการคำนวณ DiffMinutes จากฝั่ง SQL โดยตรง เพื่อเลี่ยงปัญหา Timezone
             const orderCheck = await transaction.request()
                 .input('oId', sql.Int, orderId)
                 .query(`
@@ -2237,7 +2236,7 @@ app.post('/api/p2p/match-order', async (req, res) => {
             if (orderCheck.recordset.length === 0) throw new Error("ไม่พบรายการนี้");
             const orderData = orderCheck.recordset[0];
             
-            // 🌟 ตรวจสอบว่าเกิน 5 นาทีหรือยัง (ใช้ค่าเวลาจาก Database ล้วนๆ)
+            // 🌟 ตรวจสอบว่าเกิน 5 นาทีหรือยัง
             if (orderData.DiffMinutes > 5) {
                  await transaction.request()
                     .input('oId', sql.Int, orderId)
@@ -2269,10 +2268,23 @@ app.post('/api/p2p/match-order', async (req, res) => {
                 .input('amt', sql.Decimal(18,4), orderData.Amount)
                 .query(`UPDATE Wallets SET Balance = Balance - @amt WHERE UserId = @uid`);
 
-            // 4. 🔑 สร้างรหัสยืนยัน 6 หลักสุ่ม (เช่น X7B9Q2)
+            // ==============================================================
+            // 🌟 4. บันทึกประวัติการถูกหักเงินเป็นหลักประกัน (ESCROW_HOLD - รอดำเนินการ)
+            // ==============================================================
+            const refEscrow = `P2P-${orderId}_ESCROW`;
+            await transaction.request()
+                .input('escrowUid', sql.Int, matchedUserId)
+                .input('escrowAmt', sql.Decimal(18,4), orderData.Amount)
+                .input('escrowRef', sql.VarChar, refEscrow)
+                .query(`
+                    INSERT INTO Transactions (UserId, TransactionType, Amount, Status, ReferenceId, CreatedAt) 
+                    VALUES (@escrowUid, 'ESCROW_HOLD', @escrowAmt, 'PENDING', @escrowRef, GETDATE())
+                `);
+
+            // 5. 🔑 สร้างรหัสยืนยัน 6 หลักสุ่ม (เช่น X7B9Q2)
             const confirmationCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-            // 5. อัปเดตสถานะงานเป็น MATCHED
+            // 6. อัปเดตสถานะงานเป็น MATCHED
             await transaction.request()
                 .input('oId', sql.Int, orderId)
                 .input('mId', sql.Int, matchedUserId)
@@ -2282,8 +2294,6 @@ app.post('/api/p2p/match-order', async (req, res) => {
                     SET Status = 'MATCHED', MatchedUserId = @mId, ConfirmationCode = @code, MatchedAt = GETDATE()
                     WHERE Id = @oId
                 `);
-
-            // (ถ้ามีระบบ Notification สามารถแทรกคำสั่ง INSERT แจ้งเตือนผู้ฝากเงินได้ที่นี่)
 
             await transaction.commit();
             res.json({ success: true, message: "รับงานสำเร็จ! กรุณารอผู้ฝากโอนเงิน", confirmationCode: confirmationCode });
