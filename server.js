@@ -2588,12 +2588,7 @@ app.get('/api/user/balance/:username', async (req, res) => {
     }
 });
 
-// ==============================================================
-// 🌟 API (Admin): 1. ดึงรายการบัญชีธนาคารทั้งหมด (KYC)
-// ==============================================================
-// ==============================================================
-// 🌟 1. API สำหรับดึงข้อมูลบัญชีที่รอตรวจสอบ (ฝั่งแอดมิน)
-// ==============================================================
+// ดึงข้อมูล KYC มาแสดงหน้า Admin
 app.get('/api/admin/kyc', async (req, res) => {
     try {
         let pool = await sql.connect(config);
@@ -2609,17 +2604,13 @@ app.get('/api/admin/kyc', async (req, res) => {
     }
 });
 
-// ==============================================================
-// 🌟 2. API สำหรับอัปเดตสถานะ (อนุมัติ / ปฏิเสธ) พร้อมข้อความตอบกลับ
-// ==============================================================
+// อัปเดตสถานะ อนุมัติ/ไม่อนุมัติ
 app.post('/api/admin/kyc/update', async (req, res) => {
     const { id, status } = req.body; 
-    
     try {
         let pool = await sql.connect(config);
         const isVerified = status === 'APPROVED' ? 1 : 0;
-        
-        // กำหนดข้อความแจ้งเตือนตามสถานะ
+
         let responseMessage = "";
         if (status === 'APPROVED') {
             responseMessage = "เอกสารธนาคารถูกต้องผ่านการตรวจสอบ";
@@ -2636,17 +2627,13 @@ app.post('/api/admin/kyc/update', async (req, res) => {
                 SET Status = @status, IsVerified = @isVerified 
                 WHERE Id = @id
             `);
-            
-        res.json({ 
-            success: true, 
-            message: responseMessage // ส่งข้อความกลับไปให้หน้าบ้านแจ้งเตือน
-        });
+
+        res.json({ success: true, message: responseMessage });
     } catch (err) {
         console.error("Error updating KYC:", err);
         res.status(500).json({ success: false, error: err.message });
     }
 });
-
 
 
 
