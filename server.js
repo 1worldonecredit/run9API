@@ -2736,24 +2736,23 @@ app.get('/api/admin/p2p-orders', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // ดึงข้อมูล P2P_Orders และ JOIN เอาชื่อ Username ของผู้ฝากและผู้รับงานมาด้วย
+        // 🌟 แก้ไข: ลบการ JOIN กับตาราง UsersRegister ออกไปก่อน 
+        // แล้วส่ง RequesterId กลับไปให้ Frontend ใช้แทน
         let result = await pool.request().query(`
             SELECT 
-                P.Id,
-                P.OrderType,
-                P.Amount,
-                P.Status,
-                P.CreatedAt,
-                P.UpdatedAt,
-                P.MatchedAt,
-                P.CompletedAt,
-                U1.Username AS RequesterUsername,
-                U2.Username AS MatchedUsername
-            FROM P2P_Orders P
-            LEFT JOIN UsersRegister U1 ON P.RequesterId = U1.Id
-            LEFT JOIN UsersRegister U2 ON P.MatchedUserId = U2.Id
-            ORDER BY P.Id DESC
+                Id,
+                OrderType,
+                Amount,
+                Status,
+                CreatedAt,
+                UpdatedAt,
+                RequesterId -- 🌟 ดึงแค่รหัสไปก่อน
+            FROM P2P_Orders
+            ORDER BY Id DESC
         `);
+
+        // ตรวจสอบข้อมูลก่อนส่ง
+        // console.log("P2P Data:", result.recordset); 
 
         res.json({ success: true, p2pOrders: result.recordset });
 
