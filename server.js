@@ -2729,6 +2729,39 @@ app.post('/api/admin/p2p-admin-match', async (req, res) => {
     }
 });
 
+// ==============================================================
+// 🌟 API สำหรับดึงข้อมูล P2P ทั้งหมด (หน้า ManageP2P ของ Admin)
+// ==============================================================
+app.get('/api/admin/p2p-orders', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        
+        // ดึงข้อมูล P2P_Orders และ JOIN เอาชื่อ Username ของผู้ฝากและผู้รับงานมาด้วย
+        let result = await pool.request().query(`
+            SELECT 
+                P.Id,
+                P.OrderType,
+                P.Amount,
+                P.Status,
+                P.CreatedAt,
+                P.UpdatedAt,
+                P.MatchedAt,
+                P.CompletedAt,
+                U1.Username AS RequesterUsername,
+                U2.Username AS MatchedUsername
+            FROM P2P_Orders P
+            LEFT JOIN UsersRegister U1 ON P.RequesterId = U1.Id
+            LEFT JOIN UsersRegister U2 ON P.MatchedUserId = U2.Id
+            ORDER BY P.Id DESC
+        `);
+
+        res.json({ success: true, p2pOrders: result.recordset });
+
+    } catch (err) {
+        console.error("Error fetching admin P2P orders:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
