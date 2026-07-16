@@ -2635,7 +2635,76 @@ app.post('/api/admin/kyc/update', async (req, res) => {
     }
 });
 
+// ==============================================================
+// 🌟 1. API ดึงสถิติ Dashboard (ผู้ใช้งาน และ ออเดอร์ P2P)
+// ==============================================================
+app.get('/api/admin/dashboard-stats', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        
+        // 1. นับผู้ใช้งานทั้งหมด และแยกตามประเทศ
+        const usersRes = await pool.request().query(`
+            SELECT 
+                (SELECT COUNT(*) FROM UsersRegister) as TotalUsers,
+                (SELECT COUNT(*) FROM UsersRegister WHERE CAST(RegistrationDate AS DATE) = CAST(GETUTCDATE() AS DATE)) as TodayUsers,
+                Country, COUNT(*) as CountryCount
+            FROM UsersRegister
+            GROUP BY Country
+        `);
 
+        // 2. ดึงออเดอร์ P2P เติมเงิน ที่ยังค้างอยู่ (PENDING และ MATCHED)
+        const p2pRes = await pool.request().query(`
+            SELECT Id, RequesterUsername, MatchedUsername, Amount, Status, CreatedAt, OrderType, Currency
+            FROM P2P_Orders
+            WHERE Status IN ('PENDING', 'MATCHED', 'SLIP_UPLOADED') AND OrderType = 'DEPOSIT'
+            ORDER BY CreatedAt DESC
+        `);
+
+        // จัดรูปข้อมูลประเทศ
+        const countryStats = usersRes.recordset.map(row => ({
+            country: row.Country,
+            count: row.CountryCount
+        }));
+
+        res.json({ 
+            success: true, 
+            stats: {
+                totalUsers: usersRes.recordset.length > 0 ? usersRes.recordset[0].TotalUsers : 0,
+                todayUsers: usersRes.recordset.length > 0 ? usersRes.recordset[0].TodayUsers : 0,
+                countryStats: countryStats.filter(c => c.country != null) // กรองค่า NULL ทิ้ง
+            },
+            p2pOrders: p2pRes.recordset
+        });
+    } catch (err) {
+        console.error("Error fetching dashboard stats:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ==============================================================
+// 🌟 2. API สำหรับให้ Admin กดรับงาน P2P แทน (กันออเดอร์หลุด)
+// ==============================================================
+app.post('/api/admin/p2p-admin-match', async (req, res) => {
+    const { orderId, adminUsername } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        
+        // อัปเดตสถานะให้เป็น MATCHED และใส่ชื่อแอดมินเป็นคนรับงาน
+        await pool.request()
+            .input('id', sql.Int, orderId)
+            .input('matcher', sql.VarChar, adminUsername)
+            .query(`
+                UPDATE P2P_Orders 
+                SET Status = 'MATCHED', MatchedUsername = @matcher 
+                WHERE Id = @id AND Status = 'PENDING'
+            `);
+            
+        res.json({ success: true, message: "แอดมินรับออเดอร์นี้สำเร็จแล้ว!" });
+    } catch (err) {
+        console.error("Error matching order as admin:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
