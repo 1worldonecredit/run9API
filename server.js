@@ -1497,30 +1497,53 @@ app.post('/api/user/bank', async (req, res) => {
 // ==============================================================
 app.post('/api/admin/login', async (req, res) => {
     const { username, password } = req.body;
+    
     try {
         let pool = await sql.connect(config);
         
-        // ค้นหาข้อมูลจากตาราง Employees
-        const result = await pool.request()
-            .input('u', sql.VarChar, username)
-            .input('p', sql.VarChar, password)
-            .query(`SELECT EmployeeCode, Username, FirstName, LastName, Role
-                    FROM Employees 
-                    WHERE Username = @u AND Password = @p AND Status = 'Active'`);
+        let result = await pool.request()
+            .input('user', sql.VarChar, username)
+            .input('pass', sql.VarChar, password)
+            .query(`
+                SELECT 
+                    U.Id AS UserId, 
+                    U.Username, 
+                    U.FirstName, 
+                    U.LastName, 
+                    U.Country, 
+                    R.RoleName
+                FROM UsersRegister U
+                INNER JOIN Employees E ON U.Id = E.UserId
+                INNER JOIN Roles R ON E.RoleId = R.Id
+                WHERE U.Username = @user 
+                  AND U.Password = @pass 
+                  AND U.Status = 'Active' 
+                  AND U.IsEmployee = 1
+            `);
 
         if (result.recordset.length > 0) {
-            // ถ้าเจอ ให้ส่งข้อมูลกลับไป
-            res.json({ success: true, user: result.recordset[0] });
+            const adminData = result.recordset[0]; 
+            
+            res.json({ 
+                success: true,
+                message: "เข้าสู่ระบบสำเร็จ",
+                user: {
+                    Id: adminData.UserId,
+                    Username: adminData.Username,
+                    FirstName: adminData.FirstName || adminData.Username, // ถ้าไม่มีชื่อจริงให้ใช้ Username แทน
+                    LastName: adminData.LastName || '',
+                    Country: adminData.Country, // 🌟 ส่งประเทศกลับไป
+                    Role: adminData.RoleName
+                }
+            });
         } else {
-            // ถ้าไม่เจอ (รหัสผิด)
-            res.status(401).json({ error: "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" });
+            res.status(401).json({ success: false, error: 'รหัสผ่านผิด หรือคุณไม่มีสิทธิ์เข้าใช้ระบบนี้' });
         }
     } catch (err) {
-        console.error("Admin Login Error:", err.message);
-        res.status(500).json({ error: err.message });
+        console.error("Error Admin Login:", err);
+        res.status(500).json({ success: false, error: 'เซิร์ฟเวอร์มีปัญหา: ' + err.message });
     }
 });
-
 // ==============================================================
 // 🌟 API: ดึงประวัติรายการเฉพาะของ User นั้นๆ (หน้า Assets)4444444
 // ==============================================================
