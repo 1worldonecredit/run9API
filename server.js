@@ -2591,6 +2591,9 @@ app.get('/api/user/balance/:username', async (req, res) => {
 // ==============================================================
 // 🌟 API (Admin): 1. ดึงรายการบัญชีธนาคารทั้งหมด (KYC)
 // ==============================================================
+// ==============================================================
+// 🌟 1. API สำหรับดึงข้อมูลบัญชีที่รอตรวจสอบ (ฝั่งแอดมิน)
+// ==============================================================
 app.get('/api/admin/kyc', async (req, res) => {
     try {
         let pool = await sql.connect(config);
@@ -2607,13 +2610,22 @@ app.get('/api/admin/kyc', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API (Admin): 2. อัปเดตสถานะบัญชี (อนุมัติ / ปฏิเสธ)
+// 🌟 2. API สำหรับอัปเดตสถานะ (อนุมัติ / ปฏิเสธ) พร้อมข้อความตอบกลับ
 // ==============================================================
 app.post('/api/admin/kyc/update', async (req, res) => {
-    const { id, status } = req.body; // status จะส่งมาเป็น 'APPROVED' หรือ 'REJECTED'
+    const { id, status } = req.body; 
+    
     try {
         let pool = await sql.connect(config);
-        const isVerified = status === 'APPROVED' ? 1 : 0; // ถ้าอนุมัติให้ IsVerified เป็น 1
+        const isVerified = status === 'APPROVED' ? 1 : 0;
+        
+        // กำหนดข้อความแจ้งเตือนตามสถานะ
+        let responseMessage = "";
+        if (status === 'APPROVED') {
+            responseMessage = "เอกสารธนาคารถูกต้องผ่านการตรวจสอบ";
+        } else if (status === 'REJECTED') {
+            responseMessage = "กรุณาอัพโหลดหน้าสมุดธนาคารที่ชื่อตรงกับชื่อในระบบเท่านั้น";
+        }
 
         await pool.request()
             .input('id', sql.Int, id)
@@ -2625,12 +2637,18 @@ app.post('/api/admin/kyc/update', async (req, res) => {
                 WHERE Id = @id
             `);
             
-        res.json({ success: true, message: `อัปเดตสถานะเป็น ${status} สำเร็จ` });
+        res.json({ 
+            success: true, 
+            message: responseMessage // ส่งข้อความกลับไปให้หน้าบ้านแจ้งเตือน
+        });
     } catch (err) {
         console.error("Error updating KYC:", err);
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+
+
 
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
