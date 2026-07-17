@@ -2148,43 +2148,73 @@ app.post('/api/p2p/create-order', async (req, res) => {
     }
 });
 
-
+// =================================================================
+// 🌟 1. API ดึงงานหน้า Market (ดึงเวลาจาก SystemSettings)
+// =================================================================
 app.get('/api/p2p/orders/pending', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // 🌟 ตั้งค่าศูนย์กลางเวลา (อนาคตคุณสามารถดึงค่านี้จาก Table SystemSettings ได้เลย)
-        const GLOBAL_ORDER_TIMEOUT_SECONDS = 300; // ค่าเริ่มต้น 300 วินาที (5 นาที)
+        // ดึงเวลาตั้งค่าจาก Database
+        const settingRes = await pool.request().query(`SELECT SettingValue FROM SystemSettings WHERE SettingKey = 'P2P_TIMEOUT_SECONDS'`);
+        const timeoutSeconds = settingRes.recordset.length > 0 ? parseInt(settingRes.recordset[0].SettingValue) : 1800; // ค่าเผื่อเหนียว 30 นาที
 
         let queryStr = `
             SELECT 
-                o.Id, 
-                o.OrderType, 
-                o.Amount, 
-                o.FeeAmount, 
-                o.CreatedAt,
-                u.Username,
-                -- 🌟 ให้ DB คำนวณเวลาที่ผ่านไป
+                o.Id, o.OrderType, o.Amount, o.FeeAmount, o.CreatedAt, u.Username,
                 DATEDIFF(second, o.CreatedAt, GETDATE()) AS ElapsedSeconds
             FROM P2P_Orders o
             JOIN UsersRegister u ON o.RequesterId = u.Id
             WHERE o.Status = 'PENDING'
             ORDER BY o.CreatedAt DESC
         `;
-
         const result = await pool.request().query(queryStr);
         
-        // 🌟 ส่ง timeoutSetting แนบไปกับข้อมูลด้วย Frontend จะได้รู้ว่าต้องนับถอยหลังจากกี่วินาที
-        res.json({ 
-            success: true, 
-            timeoutSetting: GLOBAL_ORDER_TIMEOUT_SECONDS, 
-            orders: result.recordset 
-        });
-
+        // ส่ง timeoutSetting ไปให้ Frontend ด้วย!
+        res.json({ success: true, timeoutSetting: timeoutSeconds, orders: result.recordset });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+// =================================================================
+// 🌟 2. API ประวัติของฉัน (ดึงเวลาจาก SystemSettings)
+// =================================================================
+app.get('/api/p2p/my-orders/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        
+        // ดึงเวลาตั้งค่าจาก Database
+        const settingRes = await pool.request().query(`SELECT SettingValue FROM SystemSettings WHERE SettingKey = 'P2P_TIMEOUT_SECONDS'`);
+        const timeoutSeconds = settingRes.recordset.length > 0 ? parseInt(settingRes.recordset[0].SettingValue) : 1800;
+
+        const userRes = await pool.request()
+            .input('user', sql.VarChar, username)
+            .query(`SELECT Id FROM UsersRegister WHERE Username = @user`);
+            
+        if (userRes.recordset.length === 0) return res.status(404).json({error: 'ไม่พบผู้ใช้งาน'});
+        const userId = userRes.recordset[0].Id;
+
+        const ordersRes = await pool.request()
+            .input('uid', sql.Int, userId)
+            .query(`
+                SELECT 
+                    Id, OrderType, Amount, Status, CreatedAt, Currency,
+                    CASE WHEN RequesterId = @uid THEN 'REQUESTER' ELSE 'MATCHER' END as MyRole,
+                    DATEDIFF(second, CreatedAt, GETDATE()) AS ElapsedSeconds
+                FROM P2P_Orders
+                WHERE RequesterId = @uid OR MatchedUserId = @uid
+                ORDER BY CreatedAt DESC
+            `);
+            
+        // ส่ง timeoutSetting ไปให้ Frontend ด้วย!
+        res.json({ success: true, timeoutSetting: timeoutSeconds, orders: ordersRes.recordset });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ==============================================================
 // 🌟 API P2P: ดึงรายการ P2P ของฉัน (My Orders)
 // ==============================================================
@@ -2796,6 +2826,7 @@ app.get('/api/admin/customers', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
 
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
