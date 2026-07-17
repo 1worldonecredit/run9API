@@ -2147,11 +2147,15 @@ app.post('/api/p2p/create-order', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+
 app.get('/api/p2p/orders/pending', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // โค้ดดั้งเดิมของคุณแบบเพียวๆ (ไม่กรองประเทศ ไม่ตัดเวลา)
+        // 🌟 ตั้งค่าศูนย์กลางเวลา (อนาคตคุณสามารถดึงค่านี้จาก Table SystemSettings ได้เลย)
+        const GLOBAL_ORDER_TIMEOUT_SECONDS = 300; // ค่าเริ่มต้น 300 วินาที (5 นาที)
+
         let queryStr = `
             SELECT 
                 o.Id, 
@@ -2159,7 +2163,9 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
                 o.Amount, 
                 o.FeeAmount, 
                 o.CreatedAt,
-                u.Username
+                u.Username,
+                -- 🌟 ให้ DB คำนวณเวลาที่ผ่านไป
+                DATEDIFF(second, o.CreatedAt, GETDATE()) AS ElapsedSeconds
             FROM P2P_Orders o
             JOIN UsersRegister u ON o.RequesterId = u.Id
             WHERE o.Status = 'PENDING'
@@ -2167,10 +2173,15 @@ app.get('/api/p2p/orders/pending', async (req, res) => {
         `;
 
         const result = await pool.request().query(queryStr);
-        res.json({ success: true, orders: result.recordset });
+        
+        // 🌟 ส่ง timeoutSetting แนบไปกับข้อมูลด้วย Frontend จะได้รู้ว่าต้องนับถอยหลังจากกี่วินาที
+        res.json({ 
+            success: true, 
+            timeoutSetting: GLOBAL_ORDER_TIMEOUT_SECONDS, 
+            orders: result.recordset 
+        });
 
     } catch (err) {
-        // ส่ง Error ออกมาให้เห็นใน Network -> Response
         res.status(500).json({ success: false, error: err.message });
     }
 });
