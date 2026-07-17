@@ -2769,8 +2769,7 @@ app.get('/api/admin/customers', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // ดึงข้อมูลลูกค้า (ดึงฟิลด์พื้นฐานมาแสดงผล)
-        // หมายเหตุ: หากคอลัมน์ไหนไม่มีใน DB ของคุณ สามารถลบออกได้ครับ
+        // เอา CreatedAt ออก เพราะในตารางไม่มีคอลัมน์นี้
         let result = await pool.request().query(`
             SELECT 
                 Id, 
@@ -2778,8 +2777,7 @@ app.get('/api/admin/customers', async (req, res) => {
                 FirstName, 
                 LastName, 
                 Country, 
-                Phone, 
-                CreatedAt
+                Phone
             FROM UsersRegister
             ORDER BY Id DESC
         `);
