@@ -2730,7 +2730,7 @@ app.post('/api/admin/p2p-admin-match', async (req, res) => {
 });
 
 // ==============================================================
-// 🌟 API สำหรับดึงข้อมูล P2P (แก้ปัญหา Timezone)
+// 🌟 API สำหรับดึงข้อมูล P2P (หน้า Admin) - แก้ปัญหา Timezone แล้ว
 // ==============================================================
 app.get('/api/admin/p2p-orders', async (req, res) => {
     try {
@@ -2744,7 +2744,7 @@ app.get('/api/admin/p2p-orders', async (req, res) => {
                 Status,
                 CreatedAt,
                 RequesterId,
-                DATEDIFF(second, CreatedAt, GETDATE()) AS ElapsedSeconds -- 🌟 ให้ DB คำนวณให้เลยว่าผ่านมากี่วินาทีแล้ว
+                DATEDIFF(second, CreatedAt, GETDATE()) AS ElapsedSeconds -- 🌟 เพิ่มบรรทัดนี้ ให้ DB คำนวณเวลาที่ผ่านไปให้
             FROM P2P_Orders
             ORDER BY Id DESC
         `);
@@ -2752,7 +2752,6 @@ app.get('/api/admin/p2p-orders', async (req, res) => {
         res.json({ success: true, p2pOrders: result.recordset });
 
     } catch (err) {
-        console.error("Error fetching admin P2P orders:", err);
         res.status(500).json({ success: false, error: err.message });
     }
 });
