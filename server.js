@@ -2762,6 +2762,36 @@ app.get('/api/admin/p2p-orders', async (req, res) => {
     }
 });
 
+// ==============================================================
+// 🌟 API สำหรับดึงข้อมูลลูกค้าทั้งหมด (หน้า Manage Customers)
+// ==============================================================
+app.get('/api/admin/customers', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        
+        // ดึงข้อมูลลูกค้า (ดึงฟิลด์พื้นฐานมาแสดงผล)
+        // หมายเหตุ: หากคอลัมน์ไหนไม่มีใน DB ของคุณ สามารถลบออกได้ครับ
+        let result = await pool.request().query(`
+            SELECT 
+                Id, 
+                Username, 
+                FirstName, 
+                LastName, 
+                Country, 
+                Phone, 
+                CreatedAt
+            FROM UsersRegister
+            ORDER BY Id DESC
+        `);
+
+        res.json({ success: true, customers: result.recordset });
+    } catch (err) {
+        console.error("Error fetching customers:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
