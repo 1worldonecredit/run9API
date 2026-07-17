@@ -2729,6 +2729,7 @@ app.post('/api/admin/p2p-admin-match', async (req, res) => {
     }
 });
 
+
 // ==============================================================
 // 🌟 API สำหรับดึงข้อมูล P2P ทั้งหมด (หน้า ManageP2P ของ Admin)
 // ==============================================================
@@ -2736,8 +2737,6 @@ app.get('/api/admin/p2p-orders', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // 🌟 แก้ไข: ลบการ JOIN กับตาราง UsersRegister ออกไปก่อน 
-        // แล้วส่ง RequesterId กลับไปให้ Frontend ใช้แทน
         let result = await pool.request().query(`
             SELECT 
                 Id,
@@ -2745,14 +2744,10 @@ app.get('/api/admin/p2p-orders', async (req, res) => {
                 Amount,
                 Status,
                 CreatedAt,
-                UpdatedAt,
-                RequesterId -- 🌟 ดึงแค่รหัสไปก่อน
+                RequesterId -- 🌟 ลบ UpdatedAt ออกไปแล้ว
             FROM P2P_Orders
             ORDER BY Id DESC
         `);
-
-        // ตรวจสอบข้อมูลก่อนส่ง
-        // console.log("P2P Data:", result.recordset); 
 
         res.json({ success: true, p2pOrders: result.recordset });
 
