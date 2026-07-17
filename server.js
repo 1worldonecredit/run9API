@@ -2827,6 +2827,40 @@ app.get('/api/admin/customers', async (req, res) => {
     }
 });
 
+// =================================================================
+// 🌟 API ดึงข้อมูลทีมงานของฉัน
+// =================================================================
+app.get('/api/team/my-team/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        
+        // ดึงข้อมูลลูกทีมโดยเช็คจาก ReferralUsername
+        // 💡 หมายเหตุ: commissionEarned ผมใส่เป็น 0 ไว้ชั่วคราว คุณสามารถ JOIN ตาราง P2P_Orders หรือ Transactions เพื่อ SUM ยอด 5% ของลูกทีมแต่ละคนมาใส่ตรงนี้ได้เลยครับ
+        let queryStr = `
+            SELECT 
+                Id, 
+                Username, 
+                FirstName, 
+                LastName, 
+                Country, 
+                RegistrationDateTime AS registeredAt,
+                0 AS commissionEarned 
+            FROM UsersRegister 
+            WHERE ReferralUsername = @user
+            ORDER BY RegistrationDateTime DESC
+        `;
+        
+        const result = await pool.request()
+            .input('user', sql.VarChar, username)
+            .query(queryStr);
+            
+        res.json({ success: true, members: result.recordset });
+    } catch (err) {
+        console.error("Team API Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
