@@ -2196,7 +2196,8 @@ app.get('/api/p2p/my-orders/:username', async (req, res) => {
             .query(`
                 SELECT 
                     Id, OrderType, Amount, Status, CreatedAt, Currency,
-                    CASE WHEN RequesterId = @uid THEN 'REQUESTER' ELSE 'MATCHER' END as MyRole
+                    CASE WHEN RequesterId = @uid THEN 'REQUESTER' ELSE 'MATCHER' END as MyRole,
+                    DATEDIFF(second, CreatedAt, GETDATE()) AS ElapsedSeconds -- 🌟 เพิ่มส่วนนี้ เพื่อส่งเวลาที่ผ่านไปให้หน้าเว็บ
                 FROM P2P_Orders
                 WHERE RequesterId = @uid OR MatchedUserId = @uid
                 ORDER BY CreatedAt DESC
