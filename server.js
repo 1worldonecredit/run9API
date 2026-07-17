@@ -2761,7 +2761,6 @@ app.get('/api/admin/p2p-orders', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
-
 // ==============================================================
 // 🌟 API สำหรับดึงข้อมูลลูกค้าทั้งหมด (หน้า Manage Customers)
 // ==============================================================
@@ -2769,17 +2768,19 @@ app.get('/api/admin/customers', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // เอา CreatedAt ออก เพราะในตารางไม่มีคอลัมน์นี้
+        // 🌟 แก้ไข: ใช้ LEFT JOIN เพื่อดึงข้อมูลชื่อและวันที่จากตาราง UserNames
         let result = await pool.request().query(`
             SELECT 
-                Id, 
-                Username, 
-                FirstName, 
-                LastName, 
-                Country, 
-                Phone
-            FROM UsersRegister
-            ORDER BY Id DESC
+                U.Id, 
+                U.Username, 
+                N.FirstName, 
+                N.LastName, 
+                U.Country, 
+                U.Phone,
+                N.CreatedAt  -- 🌟 ดึงวันที่กลับมาได้แล้ว!
+            FROM UsersRegister U
+            LEFT JOIN UserNames N ON U.Username = N.Username
+            ORDER BY U.Id DESC
         `);
 
         res.json({ success: true, customers: result.recordset });
