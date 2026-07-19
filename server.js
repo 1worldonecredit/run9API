@@ -2835,20 +2835,29 @@ app.get('/api/team/my-team/:username', async (req, res) => {
     try {
         let pool = await sql.connect(config);
         
-        // ดึงข้อมูลลูกทีมโดยเช็คจาก ReferralUsername
-        // 💡 หมายเหตุ: commissionEarned ผมใส่เป็น 0 ไว้ชั่วคราว คุณสามารถ JOIN ตาราง P2P_Orders หรือ Transactions เพื่อ SUM ยอด 5% ของลูกทีมแต่ละคนมาใส่ตรงนี้ได้เลยครับ
+        // 🌟 อัปเดต SQL: ดึงรูปลูกทีม และคำนวณค่านายหน้า 5% จากตาราง Transactions
         let queryStr = `
             SELECT 
-                Id, 
-                Username, 
-                FirstName, 
-                LastName, 
-                Country, 
-                RegistrationDateTime AS registeredAt,
-                0 AS commissionEarned 
-            FROM UsersRegister 
-            WHERE ReferralUsername = @user
-            ORDER BY RegistrationDateTime DESC
+                UR.Id, 
+                UR.Username, 
+                UR.FirstName, 
+                UR.LastName, 
+                UR.Country, 
+                UR.RegistrationDateTime AS registeredAt,
+                UP.ProfileImageUrl,
+                -- 🌟 คำนวณ 5% จากยอด Amount ในตาราง Transactions
+                -- หมายเหตุ: ตรง TransactionType = 'FEE' ให้คุณเปลี่ยนเป็นชื่อประเภทธุรรกรมที่คุณใช้เก็บค่าธรรมเนียมจริงๆ 
+                ISNULL((
+                    SELECT SUM(Amount * 0.05) 
+                    FROM Transactions T 
+                    WHERE T.UserId = UR.Id 
+                      AND T.TransactionType = 'FEE' 
+                      AND T.Status = 'COMPLETED'
+                ), 0) AS commissionEarned 
+            FROM UsersRegister UR
+            LEFT JOIN UserProfiles UP ON UR.Username = UP.Username
+            WHERE UR.ReferralUsername = @user
+            ORDER BY UR.RegistrationDateTime DESC
         `;
         
         const result = await pool.request()
