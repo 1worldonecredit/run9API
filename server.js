@@ -3077,6 +3077,101 @@ app.post('/api/chat/delete/:id', async (req, res) => {
     }
 });
 
+// =================================================================
+// 🌟 API ระบบ Chat List & Friends (อัปเดตใหม่)
+// =================================================================
+
+// 1. ขอเพิ่มเพื่อน (เปลี่ยนสถานะเป็น PENDING แทน)
+app.post('/api/chat/add-friend', async (req, res) => {
+    const { me, friendUsername } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        let checkQuery = `SELECT * FROM ChatFriends WHERE (Username = @me AND FriendUsername = @friend) OR (Username = @friend AND FriendUsername = @me)`;
+        let checkResult = await pool.request().input('me', sql.VarChar, me).input('friend', sql.VarChar, friendUsername).query(checkQuery);
+
+        if (checkResult.recordset.length > 0) {
+            return res.json({ success: false, message: 'มีคำขออยู่แล้ว หรือเป็นเพื่อนกันแล้ว' });
+        }
+
+        // 🌟 เปลี่ยนจาก 'FRIEND' เป็น 'PENDING'
+        let insertQuery = `INSERT INTO ChatFriends (Username, FriendUsername, Status) VALUES (@me, @friend, 'PENDING')`;
+        await pool.request().input('me', sql.VarChar, me).input('friend', sql.VarChar, friendUsername).query(insertQuery);
+
+        res.json({ success: true, message: 'ส่งคำขอเพิ่มเพื่อนแล้ว กรุณารอการยืนยัน' });
+    } catch (err) {
+        console.error("Add Friend Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 2. ยอมรับคำขอเป็นเพื่อน
+app.post('/api/chat/accept-friend', async (req, res) => {
+    const { me, requesterUsername } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        let updateQuery = `UPDATE ChatFriends SET Status = 'FRIEND' WHERE Username = @reqUser AND FriendUsername = @me`;
+        await pool.request().input('me', sql.VarChar, me).input('reqUser', sql.VarChar, requesterUsername).query(updateQuery);
+        res.json({ success: true, message: 'ยอมรับเพื่อนสำเร็จ' });
+    } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// 3. ปฏิเสธ/ลบเพื่อน
+app.post('/api/chat/reject-friend', async (req, res) => {
+    const { me, targetUsername } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        let delQuery = `DELETE FROM ChatFriends WHERE (Username = @me AND FriendUsername = @target) OR (Username = @target AND FriendUsername = @me)`;
+        await pool.request().input('me', sql.VarChar, me).input('target', sql.VarChar, targetUsername).query(delQuery);
+        res.json({ success: true, message: 'ลบรายการสำเร็จ' });
+    } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// 4. ดึงข้อมูลหน้ารวมแชท (เพื่อนทั้งหมด, คำขอที่รอรับ, ข้อความล่าสุด)
+app.get('/api/chat/list/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        
+        // 4.1 ดึงคำขอเป็นเพื่อนที่คนอื่นส่งมาหาเรา
+        let pendingQuery = `SELECT Username AS Requester FROM ChatFriends WHERE FriendUsername = @user AND Status = 'PENDING'`;
+        let pendingResult = await pool.request().input('user', sql.VarChar, username).query(pendingQuery);
+
+        // 4.2 ดึงรายชื่อเพื่อนที่คุยได้ พร้อมข้อความล่าสุดและ Unread Count
+        let friendsQuery = `
+            SELECT 
+                CASE WHEN CF.Username = @user THEN CF.FriendUsername ELSE CF.Username END AS FriendName,
+                UP.ProfileImageUrl
+            FROM ChatFriends CF
+            LEFT JOIN UserProfiles UP ON (CASE WHEN CF.Username = @user THEN CF.FriendUsername ELSE CF.Username END) = UP.Username
+            WHERE (CF.Username = @user OR CF.FriendUsername = @user) AND CF.Status = 'FRIEND'
+        `;
+        let friendsResult = await pool.request().input('user', sql.VarChar, username).query(friendsQuery);
+        
+        let chatList = friendsResult.recordset;
+
+        // วนลูปหาข้อความล่าสุดและ Unread Count ของแต่ละห้องแชท
+        for (let i = 0; i < chatList.length; i++) {
+            let friendName = chatList[i].FriendName;
+            let roomName = [username, friendName].sort().join('_');
+            
+            let msgQuery = `
+                SELECT TOP 1 MessageText, ImageBase64, CreatedAt FROM ChatMessages WHERE RoomName = @room ORDER BY CreatedAt DESC;
+                SELECT COUNT(*) AS UnreadCount FROM ChatMessages WHERE RoomName = @room AND SenderUsername != @user AND IsRead = 0;
+            `;
+            let msgResult = await pool.request().input('room', sql.VarChar, roomName).input('user', sql.VarChar, username).query(msgQuery);
+            
+            chatList[i].latestMessage = msgResult.recordsets[0].length > 0 ? (msgResult.recordsets[0][0].ImageBase64 ? '[ส่งรูปภาพ]' : msgResult.recordsets[0][0].MessageText) : 'ยังไม่มีข้อความ';
+            chatList[i].lastTime = msgResult.recordsets[0].length > 0 ? msgResult.recordsets[0][0].CreatedAt : null;
+            chatList[i].unreadCount = msgResult.recordsets[1][0].UnreadCount;
+        }
+
+        res.json({ success: true, pendingRequests: pendingResult.recordset, chatList: chatList });
+    } catch (err) {
+        console.error("Chat List Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
