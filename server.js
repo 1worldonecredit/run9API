@@ -3062,6 +3062,22 @@ app.get('/api/chat/history/:room', async (req, res) => {
     }
 });
 
+// 5. ลบข้อความแชท (Soft Delete: แค่เปลี่ยนสถานะ IsDeleted เป็น 1)
+app.post('/api/chat/delete/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        await pool.request()
+            .input('id', sql.Int, id)
+            .query(`UPDATE ChatMessages SET IsDeleted = 1 WHERE Id = @id`);
+        res.json({ success: true, message: 'ลบข้อความเรียบร้อย' });
+    } catch (err) {
+        console.error("Delete Chat Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
