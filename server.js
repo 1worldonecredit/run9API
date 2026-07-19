@@ -3042,11 +3042,14 @@ app.post('/api/chat/save', async (req, res) => {
 // 4. ดึงประวัติแชทเก่ามาแสดงเมื่อเข้าห้อง
 app.get('/api/chat/history/:room', async (req, res) => {
     const { room } = req.params;
-    try {
+   try {
         let pool = await sql.connect(config);
-        // ดึงข้อความเรียงตามเวลาที่ส่ง
+        
+        // 🌟 แก้ไข: เพิ่ม IsRead AS isRead เข้าไปใน SELECT
         let queryStr = `
-            SELECT Id AS id, SenderUsername AS sender, MessageText AS text, ImageBase64 AS imageUrl, CreatedAt AS timestamp, IsDeleted AS isDeleted
+            SELECT Id AS id, SenderUsername AS sender, MessageText AS text, 
+                   ImageBase64 AS imageUrl, CreatedAt AS timestamp, 
+                   IsDeleted AS isDeleted, IsRead AS isRead
             FROM ChatMessages
             WHERE RoomName = @room
             ORDER BY CreatedAt ASC
