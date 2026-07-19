@@ -2870,6 +2870,41 @@ app.get('/api/team/my-team/:username', async (req, res) => {
     }
 });
 
+// =================================================================
+// 🌟 API ดึงประวัติค่านายหน้า (History)
+// =================================================================
+app.get('/api/history/commission/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        
+        // ดึงประวัติเฉพาะลูกทีมของเรา ที่เสียค่า P2P_FEE ไป 
+        let queryStr = `
+            SELECT 
+                T.Id AS TransactionId,
+                T.TransactionDate,
+                UR.Username AS FromUser,
+                UP.ProfileImageUrl,
+                (T.Amount * 0.05) AS CommissionAmount
+            FROM Transactions T
+            JOIN UsersRegister UR ON T.UserId = UR.Id
+            LEFT JOIN UserProfiles UP ON UR.Username = UP.Username
+            WHERE UR.ReferralUsername = @user
+              AND T.TransactionType = 'P2P_FEE'
+              AND T.Status = 'COMPLETED'
+            ORDER BY T.TransactionDate DESC
+        `;
+        
+        const result = await pool.request()
+            .input('user', sql.VarChar, username)
+            .query(queryStr);
+            
+        res.json({ success: true, history: result.recordset });
+    } catch (err) {
+        console.error("History API Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
