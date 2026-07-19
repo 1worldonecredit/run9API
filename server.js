@@ -2830,12 +2830,11 @@ app.get('/api/admin/customers', async (req, res) => {
 // =================================================================
 // 🌟 API ดึงข้อมูลทีมงานของฉัน
 // =================================================================
-app.get('/api/team/my-team/:username' async (req, res) => {
+app.get('/api/team/my-team/:username', async (req, res) => {
     const { username } = req.params;
     try {
         let pool = await sql.connect(config);
         
-        // 🌟 อัปเดต SQL: ดึงรูปลูกทีม และคำนวณค่านายหน้า 5% จากตาราง Transactions
         let queryStr = `
             SELECT 
                 UR.Id, 
@@ -2845,8 +2844,8 @@ app.get('/api/team/my-team/:username' async (req, res) => {
                 UR.Country, 
                 UR.RegistrationDateTime AS registeredAt,
                 UP.ProfileImageUrl,
-                -- 🌟 คำนวณ 5% จากยอด Amount ในตาราง Transactions
-                -- หมายเหตุ: ตรง TransactionType = 'P2P_FEE' ให้คุณเปลี่ยนเป็นชื่อประเภทธุรรกรมที่คุณใช้เก็บค่าธรรมเนียมจริงๆ 
+                -- 🌟 จุดที่แก้ไข: เปลี่ยนเป็น 'P2P_FEE' 
+                -- ระบบจะไปดึงยอด P2P_FEE ทั้งหมดที่ลูกทีมคนนี้ (UR.Id) ทำได้ แล้วเอามาคูณ 0.05 (5%) เพื่อโชว์ให้เราดู
                 ISNULL((
                     SELECT SUM(Amount * 0.05) 
                     FROM Transactions T 
