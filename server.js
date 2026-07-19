@@ -3173,6 +3173,46 @@ app.get('/api/chat/list/:username', async (req, res) => {
 });
 
 
+// 5. ดึงจำนวนข้อความที่ยังไม่อ่านทั้งหมดของ User (สำหรับโชว์ที่เมนูด้านล่าง)
+app.get('/api/chat/unread-total/:username', async (req, res) => {
+    const { username } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        
+        // หากลุ่มห้องแชทที่ User นี้เป็นสมาชิก
+        let roomsQuery = `SELECT * FROM ChatFriends WHERE (Username = @user OR FriendUsername = @user) AND Status = 'FRIEND'`;
+        let rooms = await pool.request().input('user', sql.VarChar, username).query(roomsQuery);
+
+        let totalUnread = 0;
+        // วนลูปนับข้อความที่ยังไม่อ่านในแต่ละห้อง
+        for(let r of rooms.recordset) {
+            let friend = r.Username === username ? r.FriendUsername : r.Username;
+            let roomName = [username, friend].sort().join('_');
+            
+            let unread = await pool.request()
+                .input('room', sql.VarChar, roomName)
+                .input('user', sql.VarChar, username)
+                .query(`SELECT COUNT(*) AS c FROM ChatMessages WHERE RoomName = @room AND SenderUsername != @user AND IsRead = 0`);
+            totalUnread += unread.recordset[0].c;
+        }
+        res.json({ success: true, total: totalUnread });
+    } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// 6. อัปเดตสถานะว่า "อ่านแล้ว" เมื่อกดเข้าห้องแชท
+app.post('/api/chat/mark-read', async (req, res) => {
+    const { room, me } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        // เปลี่ยน IsRead = 1 สำหรับข้อความที่คนอื่นส่งมา
+        await pool.request()
+            .input('room', sql.VarChar, room)
+            .input('me', sql.VarChar, me)
+            .query(`UPDATE ChatMessages SET IsRead = 1 WHERE RoomName = @room AND SenderUsername != @me AND IsRead = 0`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ success: false }); }
+});
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
