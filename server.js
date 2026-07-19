@@ -3139,9 +3139,9 @@ app.get('/api/chat/list/:username', async (req, res) => {
         let pendingQuery = `SELECT Username AS Requester FROM ChatFriends WHERE FriendUsername = @user AND Status = 'PENDING'`;
         let pendingResult = await pool.request().input('user', sql.VarChar, username).query(pendingQuery);
 
-        // 4.2 ดึงรายชื่อเพื่อนที่คุยได้ พร้อมข้อความล่าสุดและ Unread Count
+       // 4.2 ดึงรายชื่อเพื่อน (🌟 ใส่ DISTINCT เพื่อไม่ให้ดึงชื่อเพื่อนที่ซ้ำกันมาแสดง)
         let friendsQuery = `
-            SELECT 
+            SELECT DISTINCT 
                 CASE WHEN CF.Username = @user THEN CF.FriendUsername ELSE CF.Username END AS FriendName,
                 UP.ProfileImageUrl
             FROM ChatFriends CF
@@ -3203,15 +3203,16 @@ app.get('/api/chat/unread-total/:username', async (req, res) => {
 });
 
 // 6. อัปเดตสถานะว่า "อ่านแล้ว" เมื่อกดเข้าห้องแชท
+// 6. อัปเดตสถานะว่า "อ่านแล้ว" เมื่อกดเข้าห้องแชท
 app.post('/api/chat/mark-read', async (req, res) => {
     const { room, me } = req.body;
     try {
         let pool = await sql.connect(config);
-        // เปลี่ยน IsRead = 1 สำหรับข้อความที่คนอื่นส่งมา
+        // 🌟 แก้ไข: ให้เช็คเผื่อกรณีที่ IsRead เป็น NULL ด้วย
         await pool.request()
             .input('room', sql.VarChar, room)
             .input('me', sql.VarChar, me)
-            .query(`UPDATE ChatMessages SET IsRead = 1 WHERE RoomName = @room AND SenderUsername != @me AND IsRead = 0`);
+            .query(`UPDATE ChatMessages SET IsRead = 1 WHERE RoomName = @room AND SenderUsername != @me AND (IsRead = 0 OR IsRead IS NULL)`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
 });
