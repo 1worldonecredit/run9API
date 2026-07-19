@@ -2813,7 +2813,7 @@ app.get('/api/admin/customers', async (req, res) => {
                 N.FirstName, 
                 N.LastName, 
                 U.Country, 
-                U.Phone,
+                U.Phone,,
                 N.CreatedAt  -- 🌟 ดึงวันที่กลับมาได้แล้ว!
             FROM UsersRegister U
             LEFT JOIN UserNames N ON U.Username = N.Username
@@ -2830,7 +2830,7 @@ app.get('/api/admin/customers', async (req, res) => {
 // =================================================================
 // 🌟 API ดึงข้อมูลทีมงานของฉัน
 // =================================================================
-app.get('/api/team/my-team/:username', async (req, res) => {
+app.get('/api/team/my-team/:username' async (req, res) => {
     const { username } = req.params;
     try {
         let pool = await sql.connect(config);
@@ -2846,12 +2846,12 @@ app.get('/api/team/my-team/:username', async (req, res) => {
                 UR.RegistrationDateTime AS registeredAt,
                 UP.ProfileImageUrl,
                 -- 🌟 คำนวณ 5% จากยอด Amount ในตาราง Transactions
-                -- หมายเหตุ: ตรง TransactionType = 'FEE' ให้คุณเปลี่ยนเป็นชื่อประเภทธุรรกรมที่คุณใช้เก็บค่าธรรมเนียมจริงๆ 
+                -- หมายเหตุ: ตรง TransactionType = 'P2P_FEE' ให้คุณเปลี่ยนเป็นชื่อประเภทธุรรกรมที่คุณใช้เก็บค่าธรรมเนียมจริงๆ 
                 ISNULL((
                     SELECT SUM(Amount * 0.05) 
                     FROM Transactions T 
                     WHERE T.UserId = UR.Id 
-                      AND T.TransactionType = 'FEE' 
+                      AND T.TransactionType = 'P2P_FEE' 
                       AND T.Status = 'COMPLETED'
                 ), 0) AS commissionEarned 
             FROM UsersRegister UR
