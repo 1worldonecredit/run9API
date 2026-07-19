@@ -2954,9 +2954,12 @@ app.get('/api/history/commission/:username', async (req, res) => {
     }
 });
 
+
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// 🌟 เปลี่ยนจาก app.listen เป็น server.listen เพื่อให้ Socket.IO ทำงาน
+server.listen(PORT, () => {
+    console.log(`🚀 Server (with Socket.IO) is running on port ${PORT}`);
 });
