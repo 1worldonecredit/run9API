@@ -2955,6 +2955,112 @@ app.get('/api/history/commission/:username', async (req, res) => {
 });
 
 
+// =================================================================
+// 🌟 API ระบบ Chat & Friends
+// =================================================================
+
+// 1. ตรวจสอบสถานะความเป็นเพื่อน (เช็คเพื่อเปิด/ปิดช่องพิมพ์แชท)
+app.get('/api/chat/check-friend', async (req, res) => {
+    const { me, friend } = req.query;
+    try {
+        let pool = await sql.connect(config);
+        let queryStr = `
+            SELECT Status FROM ChatFriends
+            WHERE (Username = @me AND FriendUsername = @friend)
+               OR (Username = @friend AND FriendUsername = @me)
+        `;
+        let result = await pool.request()
+            .input('me', sql.VarChar, me)
+            .input('friend', sql.VarChar, friend)
+            .query(queryStr);
+
+        if (result.recordset.length > 0 && result.recordset[0].Status === 'FRIEND') {
+            res.json({ success: true, isFriend: true });
+        } else {
+            res.json({ success: true, isFriend: false });
+        }
+    } catch (err) {
+        console.error("Check Friend Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 2. ขอเพิ่มเพื่อนด้วย Username
+app.post('/api/chat/add-friend', async (req, res) => {
+    const { me, friendUsername } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        
+        // เช็คก่อนว่าเคยเพิ่มไปแล้วหรือยัง
+        let checkQuery = `SELECT * FROM ChatFriends WHERE (Username = @me AND FriendUsername = @friend) OR (Username = @friend AND FriendUsername = @me)`;
+        let checkResult = await pool.request().input('me', sql.VarChar, me).input('friend', sql.VarChar, friendUsername).query(checkQuery);
+
+        if (checkResult.recordset.length > 0) {
+            return res.json({ success: false, message: 'เป็นเพื่อนกันแล้ว หรือเคยเพิ่มไปแล้ว' });
+        }
+
+        // ถ้ายังไม่เป็นเพื่อน ให้บันทึกลงตาราง (เพื่อความรวดเร็ว ระบบนี้จะให้เป็นเพื่อนทันที 'FRIEND')
+        let insertQuery = `
+            INSERT INTO ChatFriends (Username, FriendUsername, Status)
+            VALUES (@me, @friend, 'FRIEND')
+        `;
+        await pool.request()
+            .input('me', sql.VarChar, me)
+            .input('friend', sql.VarChar, friendUsername)
+            .query(insertQuery);
+
+        res.json({ success: true, message: 'เพิ่มเพื่อนสำเร็จ! สามารถเริ่มแชทได้เลย' });
+    } catch (err) {
+        console.error("Add Friend Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 3. บันทึกข้อความแชทลง Database
+app.post('/api/chat/save', async (req, res) => {
+    const { room, sender, text, imageUrl } = req.body;
+    try {
+        let pool = await sql.connect(config);
+        let queryStr = `
+            INSERT INTO ChatMessages (RoomName, SenderUsername, MessageText, ImageBase64, IsDeleted)
+            VALUES (@room, @sender, @text, @imageUrl, 0)
+        `;
+        await pool.request()
+            .input('room', sql.VarChar, room)
+            .input('sender', sql.VarChar, sender)
+            .input('text', sql.NVarChar, text || null)
+            .input('imageUrl', sql.NVarChar, imageUrl || null) 
+            .query(queryStr);
+
+        res.json({ success: true, message: 'บันทึกข้อความสำเร็จ' });
+    } catch (err) {
+        console.error("Save Chat Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// 4. ดึงประวัติแชทเก่ามาแสดงเมื่อเข้าห้อง
+app.get('/api/chat/history/:room', async (req, res) => {
+    const { room } = req.params;
+    try {
+        let pool = await sql.connect(config);
+        // ดึงข้อความเรียงตามเวลาที่ส่ง
+        let queryStr = `
+            SELECT Id AS id, SenderUsername AS sender, MessageText AS text, ImageBase64 AS imageUrl, CreatedAt AS timestamp, IsDeleted AS isDeleted
+            FROM ChatMessages
+            WHERE RoomName = @room
+            ORDER BY CreatedAt ASC
+        `;
+        let result = await pool.request()
+            .input('room', sql.VarChar, room)
+            .query(queryStr);
+
+        res.json({ success: true, messages: result.recordset });
+    } catch (err) {
+        console.error("Chat History Error:", err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
