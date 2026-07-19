@@ -2,23 +2,42 @@ const express = require('express');
 const sql = require('mssql');
 const cors = require('cors');
 require('dotenv').config();
+const http = require('http'); // 🌟 1. เพิ่ม http
+const { Server } = require('socket.io'); // 🌟 2. เรียกใช้ Server จาก socket.io
+const cron = require('node-cron'); // (ย้ายมารวมกับกลุ่ม require ด้านบนให้เป็นระเบียบ)
 
 const app = express();
-// --- วาง CORS ตรงนี้เลยครับ ---
+
+// กำหนด URL ที่อนุญาตให้เข้าถึง API และ Socket ได้
+const allowedOrigins = [
+    'https://run9.app', 
+    'https://soidao.run9.app',
+    'http://localhost:5173',
+    'http://localhost:5174'
+];
+
+// --- วาง CORS ของ Express ---
 app.use(cors({
-    origin: ['https://run9.app', 'https://soidao.run9.app','http://localhost:5173','http://localhost:5174'], // เพิ่ม localhost สำหรับใช้ทดสอบตอนเขียนโค้ด
+    origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }));
 
-// [อัปเดตสำคัญ!] ขยายขนาดประตูรับข้อมูลของ Node.js ให้รองรับรูปภาพ (Base64) ที่มีขนาดใหญ่ได้สูงสุด 10MB
-// ถ้าไม่ใส่ 2 บรรทัดนี้ อัปโหลดรูปไปแล้วระบบจะฟ้อง Error ว่า Payload Too Large ครับ
+// [อัปเดตสำคัญ!] ขยายขนาดประตูรับข้อมูลให้รองรับรูปภาพ (Base64) ได้สูงสุด 50MB
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-const cron = require('node-cron');
+// 🌟 3. สร้าง HTTP Server โดยเอา app มาครอบ
+const server = http.createServer(app);
 
-
+// 🌟 4. ตั้งค่า Socket.IO และใช้ CORS กฎเดียวกันกับ Express ด้านบน
+const io = new Server(server, {
+    cors: {
+        origin: allowedOrigins,
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
 
 const config = {
     user: process.env.DB_USER,
@@ -27,6 +46,35 @@ const config = {
     database: process.env.DB_DATABASE,
     options: { encrypt: false, trustServerCertificate: true }
 };
+
+// =================================================================
+// 🌟 5. ระบบ Socket.IO สำหรับรับ-ส่ง Chat แบบ Real-time
+// =================================================================
+io.on('connection', (socket) => {
+    console.log('✅ ผู้ใช้เชื่อมต่อ Socket แล้ว: ID', socket.id);
+
+    // เมื่อผู้ใช้กดเข้ามาในหน้า Chat จะดึงเข้า "ห้องแชทส่วนตัว"
+    socket.on('join_room', (room) => {
+        socket.join(room);
+        console.log(`User ID: ${socket.id} เข้าร่วมห้องแชท: ${room}`);
+    });
+
+    // เมื่อมีคนกดส่งข้อความหรือส่งรูป
+    socket.on('send_message', (data) => {
+        // กระจายข้อความไปให้ทุกคนที่อยู่ในห้องเดียวกัน (ยกเว้นคนส่ง)
+        socket.to(data.room).emit('receive_message', data);
+        
+        // (เดี๋ยวในอนาคตเราค่อยมาเขียน SQL บันทึกแชทลง Database ตรงนี้ครับ)
+    });
+
+    socket.on('disconnect', () => {
+        console.log('❌ ผู้ใช้ตัดการเชื่อมต่อ: ID', socket.id);
+    });
+});
+
+// =================================================================
+// ส่วน API ต่างๆ ของคุณ (app.get, app.post) ให้วางต่อจากบรรทัดนี้ไปยาวๆ เลยครับ
+// =================================================================
 
 // ฟังก์ชันสุ่มตัวเลขแบบเติม 0 ด้านหน้า (เช่น สุ่มได้ 5 ให้กลายเป็น 05 หรือ 005)
 const generateWinningNumber = (digits) => {
