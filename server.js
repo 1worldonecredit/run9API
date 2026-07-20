@@ -3217,22 +3217,6 @@ app.post('/api/chat/mark-read', async (req, res) => {
     } catch (err) { res.status(500).json({ success: false }); }
 });
 
-
-// ==========================================
-// 🌟 API: ดึงหมวดหมู่ร้านค้า
-// ==========================================
-app.get('/api/shop-categories', async (req, res) => {
-  try {
-    let pool = await sql.connect(config);
-    // ดึงหมวดหมู่ทั้งหมดจากตาราง
-    let result = await pool.request().query("SELECT * FROM shop_categories");
-    res.json(result.recordset);
-  } catch (err) {
-    console.error("Fetch Category Error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
