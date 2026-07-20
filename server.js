@@ -3218,12 +3218,17 @@ app.post('/api/chat/mark-read', async (req, res) => {
 });
 
 
+// ==========================================
+// 🌟 API: ดึงหมวดหมู่ร้านค้า
+// ==========================================
 app.get('/api/shop-categories', async (req, res) => {
   try {
     let pool = await sql.connect(config);
-    let result = await pool.request().query("SELECT * FROM shop_categories WHERE is_active = 1");
+    // ดึงหมวดหมู่ทั้งหมดจากตาราง
+    let result = await pool.request().query("SELECT * FROM shop_categories");
     res.json(result.recordset);
   } catch (err) {
+    console.error("Fetch Category Error:", err);
     res.status(500).json({ error: err.message });
   }
 });
