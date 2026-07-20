@@ -72,6 +72,10 @@ io.on('connection', (socket) => {
     });
 });
 
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+
 // =================================================================
 // ส่วน API ต่างๆ ของคุณ (app.get, app.post) ให้วางต่อจากบรรทัดนี้ไปยาวๆ เลยครับ
 // =================================================================
@@ -133,6 +137,38 @@ async function processNewDayGame() {
         return false;
     }
 }
+
+// เปิดให้เข้าถึงโฟลเดอร์ uploads ผ่าน URL ได้ (เพื่อให้หน้าเว็บดึงรูปไปโชว์ได้)
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// ==========================================
+// 🌟 ตั้งค่าระบบอัปโหลดรูปร้านค้า (Multer)
+// ==========================================
+const shopStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = './uploads/shops';
+    // ตรวจสอบว่ามีโฟลเดอร์หรือยัง ถ้ายังให้สร้างอัตโนมัติ
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    // ตั้งชื่อไฟล์: ชื่อฟิลด์-เวลาปัจจุบัน.นามสกุลไฟล์ ป้องกันชื่อซ้ำ
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const uploadShopImages = multer({ storage: shopStorage }).fields([
+  { name: 'imageOwner', maxCount: 1 },
+  { name: 'imageLocation', maxCount: 1 },
+  { name: 'imageProductReady', maxCount: 1 },
+  { name: 'imagePackaging', maxCount: 1 },
+  { name: 'imageReadyToShip', maxCount: 1 },
+  { name: 'imageIdCard', maxCount: 1 }
+]);
+
 
 // ==============================================================
 // 🌟 API: บันทึก/อัปเดต ชื่อ-นามสกุล (ลงตาราง UserNames)
@@ -3216,6 +3252,18 @@ app.post('/api/chat/mark-read', async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
 });
+
+
+app.get('/api/shop-categories', async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    let result = await pool.request().query("SELECT * FROM shop_categories WHERE is_active = 1");
+    res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
