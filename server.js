@@ -223,6 +223,7 @@ const uploadShopFields = uploadShop.fields([
 
 app.post('/api/register-shop', uploadShopFields, async (req, res) => {
   try {
+    let pool = await sql.connect(config);
     const {
       shopName,
       categoryId,
