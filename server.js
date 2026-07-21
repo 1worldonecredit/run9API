@@ -142,27 +142,7 @@ async function processNewDayGame() {
     }
 }
 
-// เปิดให้เข้าถึงโฟลเดอร์ uploads ผ่าน URL ได้ (เพื่อให้หน้าเว็บดึงรูปไปโชว์ได้)
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// ==========================================
-// 🌟 ตั้งค่าระบบอัปโหลดรูปร้านค้า (Multer)
-// ==========================================
-const shopStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = './uploads/shops';
-    // ตรวจสอบว่ามีโฟลเดอร์หรือยัง ถ้ายังให้สร้างอัตโนมัติ
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    // ตั้งชื่อไฟล์: ชื่อฟิลด์-เวลาปัจจุบัน.นามสกุลไฟล์ ป้องกันชื่อซ้ำ
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
 
 const uploadShopImages = multer({ storage: shopStorage }).fields([
   { name: 'imageOwner', maxCount: 1 },
