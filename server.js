@@ -144,15 +144,6 @@ async function processNewDayGame() {
 
 
 
-const uploadShopImages = multer({ storage: shopStorage }).fields([
-  { name: 'imageOwner', maxCount: 1 },
-  { name: 'imageLocation', maxCount: 1 },
-  { name: 'imageProductReady', maxCount: 1 },
-  { name: 'imagePackaging', maxCount: 1 },
-  { name: 'imageReadyToShip', maxCount: 1 },
-  { name: 'imageIdCard', maxCount: 1 }
-]);
-
 
 // ==============================================================
 // 🌟 API: บันทึก/อัปเดต ชื่อ-นามสกุล (ลงตาราง UserNames)
