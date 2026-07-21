@@ -3271,6 +3271,59 @@ const uploadShopImages = multer({ storage: shopStorage }).fields([
   { name: 'imageIdCard', maxCount: 1 }
 ]);
 
+// ==========================================
+// 🚀 API: บันทึกข้อมูลเปิดร้านค้า (พร้อมอัปโหลดภาพ 6 รูป)
+// ==========================================
+const uploadShopFields = uploadShop.fields([
+  { name: 'imageOwner', maxCount: 1 },
+  { name: 'imageLocation', maxCount: 1 },
+  { name: 'imageProductReady', maxCount: 1 },
+  { name: 'imagePackaging', maxCount: 1 },
+  { name: 'imageReadyToShip', maxCount: 1 },
+  { name: 'imageIdCard', maxCount: 1 }
+]);
+
+app.post('/api/register-shop', uploadShopFields, async (req, res) => {
+  try {
+    const {
+      shopName,
+      categoryId,
+      sellOnline,
+      sellAtStore,
+      sellAtHome,
+      deliveryService,
+      marketingSupport,
+      lat,
+      lng
+    } = req.body;
+
+    // เช็กว่ามีไฟล์ภาพครบไหม หรือต้องการบังคับอะไรเพิ่ม สามารถเช็กตรงนี้ได้
+    // ตัวอย่างการดึงชื่อไฟล์ที่อัปโหลด (ถ้ามี)
+    const files = req.files || {};
+    const imageOwnerPath = files.imageOwner ? files.imageOwner[0].path : null;
+    const imageLocationPath = files.imageLocation ? files.imageLocation[0].path : null;
+    const imageProductReadyPath = files.imageProductReady ? files.imageProductReady[0].path : null;
+    const imagePackagingPath = files.imagePackaging ? files.imagePackaging[0].path : null;
+    const imageReadyToShipPath = files.imageReadyToShip ? files.imageReadyToShip[0].path : null;
+    const imageIdCardPath = files.imageIdCard ? files.imageIdCard[0].path : null;
+
+    // TODO: ตรงนี้คือจุดที่คุณสามารถเขียนคำสั่ง SQL (pool.request().query(...)) 
+    // เพื่อบันทึกข้อมูลลง Database ของคุณได้เลยครับ
+
+    console.log("รับข้อมูลร้านค้าสำเร็จ:", shopName, lat, lng);
+
+    res.status(200).json({ 
+      success: true, 
+      message: "บันทึกข้อมูลร้านค้าสำเร็จเรียบร้อยแล้ว" 
+    });
+
+  } catch (error) {
+    console.error("Error registering shop:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
