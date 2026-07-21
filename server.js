@@ -6,6 +6,12 @@ const http = require('http'); // 🌟 1. เพิ่ม http
 const { Server } = require('socket.io'); // 🌟 2. เรียกใช้ Server จาก socket.io
 const cron = require('node-cron'); // (ย้ายมารวมกับกลุ่ม require ด้านบนให้เป็นระเบียบ)
 
+
+
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
+
 const app = express();
 
 // กำหนด URL ที่อนุญาตให้เข้าถึง API และ Socket ได้
@@ -72,9 +78,7 @@ io.on('connection', (socket) => {
     });
 });
 
-const multer = require('multer');
-const fs = require('fs');
-const path = require('path');
+
 
 // =================================================================
 // ส่วน API ต่างๆ ของคุณ (app.get, app.post) ให้วางต่อจากบรรทัดนี้ไปยาวๆ เลยครับ
@@ -3267,6 +3271,34 @@ app.get('/api/shop-categories', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ==========================================
+// 🌟 ตั้งค่าระบบอัปโหลดรูปภาพร้านค้า (Multer)
+// ==========================================
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // เปิดให้เว็บดึงรูปไปโชว์ได้
+
+const shopStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = './uploads/shops';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+const uploadShopImages = multer({ storage: shopStorage }).fields([
+  { name: 'imageOwner', maxCount: 1 },
+  { name: 'imageLocation', maxCount: 1 },
+  { name: 'imageProductReady', maxCount: 1 },
+  { name: 'imagePackaging', maxCount: 1 },
+  { name: 'imageReadyToShip', maxCount: 1 },
+  { name: 'imageIdCard', maxCount: 1 }
+]);
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
