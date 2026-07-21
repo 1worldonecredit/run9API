@@ -181,6 +181,125 @@ app.post('/api/user/update-name', async (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+
+// ==========================================
+// 🌟 ตั้งค่าระบบอัปโหลดรูปภาพร้านค้า (Multer)
+// ==========================================
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // เปิดให้เว็บดึงรูปไปโชว์ได้
+
+const shopStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = './uploads/shops';
+    // เช็กว่ามีโมดูล fs หรือยัง ถ้ายังให้เรียกใช้
+    const fs = require('fs'); 
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const path = require('path');
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+// ✅ สร้างตัวแปร uploadShop ตัวหลักแค่ตัวเดียวพอ
+const uploadShop = multer({ storage: shopStorage });
+
+// ==========================================
+// 🚀 API: บันทึกข้อมูลเปิดร้านค้า (พร้อมอัปโหลดภาพ 6 รูป)
+// ==========================================
+// ✅ นำ uploadShop มากำหนด fields เพื่อเอาไปใช้ใน Route
+const uploadShopFields = uploadShop.fields([
+  { name: 'imageOwner', maxCount: 1 },
+  { name: 'imageLocation', maxCount: 1 },
+  { name: 'imageProductReady', maxCount: 1 },
+  { name: 'imagePackaging', maxCount: 1 },
+  { name: 'imageReadyToShip', maxCount: 1 },
+  { name: 'imageIdCard', maxCount: 1 }
+]);
+
+app.post('/api/register-shop', uploadShopFields, async (req, res) => {
+  try {
+    const {
+      shopName,
+      categoryId,
+      sellOnline,
+      sellAtStore,
+      sellAtHome,
+      deliveryService,
+      marketingSupport,
+      lat,
+      lng
+    } = req.body;
+
+    const files = req.files || {};
+    // เก็บ Path ของรูปภาพ (แปลง \ เป็น / เพื่อให้ URL ใช้งานบนเว็บได้ง่าย)
+    const imageOwnerPath = files.imageOwner ? files.imageOwner[0].path.replace(/\\/g, '/') : null;
+    const imageLocationPath = files.imageLocation ? files.imageLocation[0].path.replace(/\\/g, '/') : null;
+    const imageProductReadyPath = files.imageProductReady ? files.imageProductReady[0].path.replace(/\\/g, '/') : null;
+    const imagePackagingPath = files.imagePackaging ? files.imagePackaging[0].path.replace(/\\/g, '/') : null;
+    const imageReadyToShipPath = files.imageReadyToShip ? files.imageReadyToShip[0].path.replace(/\\/g, '/') : null;
+    const imageIdCardPath = files.imageIdCard ? files.imageIdCard[0].path.replace(/\\/g, '/') : null;
+
+    // ⚠️ สำคัญ: FormData จากหน้าเว็บจะส่ง boolean มาเป็นข้อความ 'true'/'false' ต้องแปลงเป็น 1 หรือ 0 สำหรับ SQL (BIT)
+    const isSellOnline = (sellOnline === 'true') ? 1 : 0;
+    const isSellAtShop = (sellAtStore === 'true') ? 1 : 0;
+    const isSellAtHome = (sellAtHome === 'true') ? 1 : 0;
+    const isNeedDelivery = (deliveryService === 'true') ? 1 : 0;
+    const isNeedMarketing = (marketingSupport === 'true') ? 1 : 0;
+
+    // 🚀 เขียนข้อมูลลง Database
+    // หมายเหตุ: user_id ตอนนี้ผมใส่ 1 ไว้เป็นค่าตั้งต้นก่อน (ถ้ามีระบบ Login ค่อยดึง id ของคนที่ล็อกอินมาใส่)
+    await pool.request()
+      .input('user_id', sql.Int, 1) // สมมติว่า user_id คือ 1
+      .input('category_id', sql.Int, categoryId)
+      .input('shop_name', sql.NVarChar, shopName)
+      .input('sell_online', sql.Bit, isSellOnline)
+      .input('sell_at_shop', sql.Bit, isSellAtShop)
+      .input('sell_at_home', sql.Bit, isSellAtHome)
+      .input('need_delivery', sql.Bit, isNeedDelivery)
+      .input('need_marketing', sql.Bit, isNeedMarketing)
+      .input('latitude', sql.NVarChar, String(lat))
+      .input('longitude', sql.NVarChar, String(lng))
+      .input('status', sql.NVarChar, 'Pending') // ตั้งสถานะเริ่มต้นเป็นรอตรวจสอบ
+      /* 
+      // 💡 ถ้าในตาราง shops ของคุณมีคอลัมน์เก็บชื่อรูป ให้เอาคอมเมนต์ออก แล้วแก้ชื่อคอลัมน์ให้ตรงครับ
+      .input('img_owner', sql.NVarChar, imageOwnerPath)
+      .input('img_location', sql.NVarChar, imageLocationPath)
+      */
+      .query(`
+        INSERT INTO shops (
+          user_id, category_id, shop_name, 
+          sell_online, sell_at_shop, sell_at_home, 
+          need_delivery, need_marketing, 
+          latitude, longitude, status
+        ) 
+        VALUES (
+          @user_id, @category_id, @shop_name, 
+          @sell_online, @sell_at_shop, @sell_at_home, 
+          @need_delivery, @need_marketing, 
+          @latitude, @longitude, @status
+        )
+      `);
+
+    console.log("✅ บันทึกข้อมูลร้านค้าลง Database สำเร็จ:", shopName);
+
+    res.status(200).json({ 
+      success: true, 
+      message: "บันทึกข้อมูลร้านค้าสำเร็จเรียบร้อยแล้ว" 
+    });
+
+  } catch (error) {
+    console.error("❌ Error registering shop:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+
 // ==============================================================
 // 🌟 1. CRON JOB: สุ่มเลขรางวัลและทบยอด ทุกเที่ยงคืน (00:00 น.)
 // ==============================================================
@@ -3240,121 +3359,6 @@ app.get('/api/shop-categories', async (req, res) => {
   } catch (err) {
     console.error("Fetch Category Error:", err);
     res.status(500).json({ error: err.message });
-  }
-});
-
-// ==========================================
-// 🌟 ตั้งค่าระบบอัปโหลดรูปภาพร้านค้า (Multer)
-// ==========================================
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'))); // เปิดให้เว็บดึงรูปไปโชว์ได้
-
-const shopStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = './uploads/shops';
-    // เช็กว่ามีโมดูล fs หรือยัง ถ้ายังให้เรียกใช้
-    const fs = require('fs'); 
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const path = require('path');
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-// ✅ สร้างตัวแปร uploadShop ตัวหลักแค่ตัวเดียวพอ
-const uploadShop = multer({ storage: shopStorage });
-
-// ==========================================
-// 🚀 API: บันทึกข้อมูลเปิดร้านค้า (พร้อมอัปโหลดภาพ 6 รูป)
-// ==========================================
-// ✅ นำ uploadShop มากำหนด fields เพื่อเอาไปใช้ใน Route
-const uploadShopFields = uploadShop.fields([
-  { name: 'imageOwner', maxCount: 1 },
-  { name: 'imageLocation', maxCount: 1 },
-  { name: 'imageProductReady', maxCount: 1 },
-  { name: 'imagePackaging', maxCount: 1 },
-  { name: 'imageReadyToShip', maxCount: 1 },
-  { name: 'imageIdCard', maxCount: 1 }
-]);
-
-app.post('/api/register-shop', uploadShopFields, async (req, res) => {
-  try {
-    const {
-      shopName,
-      categoryId,
-      sellOnline,
-      sellAtStore,
-      sellAtHome,
-      deliveryService,
-      marketingSupport,
-      lat,
-      lng
-    } = req.body;
-
-    const files = req.files || {};
-    // เก็บ Path ของรูปภาพ (แปลง \ เป็น / เพื่อให้ URL ใช้งานบนเว็บได้ง่าย)
-    const imageOwnerPath = files.imageOwner ? files.imageOwner[0].path.replace(/\\/g, '/') : null;
-    const imageLocationPath = files.imageLocation ? files.imageLocation[0].path.replace(/\\/g, '/') : null;
-    const imageProductReadyPath = files.imageProductReady ? files.imageProductReady[0].path.replace(/\\/g, '/') : null;
-    const imagePackagingPath = files.imagePackaging ? files.imagePackaging[0].path.replace(/\\/g, '/') : null;
-    const imageReadyToShipPath = files.imageReadyToShip ? files.imageReadyToShip[0].path.replace(/\\/g, '/') : null;
-    const imageIdCardPath = files.imageIdCard ? files.imageIdCard[0].path.replace(/\\/g, '/') : null;
-
-    // ⚠️ สำคัญ: FormData จากหน้าเว็บจะส่ง boolean มาเป็นข้อความ 'true'/'false' ต้องแปลงเป็น 1 หรือ 0 สำหรับ SQL (BIT)
-    const isSellOnline = (sellOnline === 'true') ? 1 : 0;
-    const isSellAtShop = (sellAtStore === 'true') ? 1 : 0;
-    const isSellAtHome = (sellAtHome === 'true') ? 1 : 0;
-    const isNeedDelivery = (deliveryService === 'true') ? 1 : 0;
-    const isNeedMarketing = (marketingSupport === 'true') ? 1 : 0;
-
-    // 🚀 เขียนข้อมูลลง Database
-    // หมายเหตุ: user_id ตอนนี้ผมใส่ 1 ไว้เป็นค่าตั้งต้นก่อน (ถ้ามีระบบ Login ค่อยดึง id ของคนที่ล็อกอินมาใส่)
-    await pool.request()
-      .input('user_id', sql.Int, 1) // สมมติว่า user_id คือ 1
-      .input('category_id', sql.Int, categoryId)
-      .input('shop_name', sql.NVarChar, shopName)
-      .input('sell_online', sql.Bit, isSellOnline)
-      .input('sell_at_shop', sql.Bit, isSellAtShop)
-      .input('sell_at_home', sql.Bit, isSellAtHome)
-      .input('need_delivery', sql.Bit, isNeedDelivery)
-      .input('need_marketing', sql.Bit, isNeedMarketing)
-      .input('latitude', sql.NVarChar, String(lat))
-      .input('longitude', sql.NVarChar, String(lng))
-      .input('status', sql.NVarChar, 'Pending') // ตั้งสถานะเริ่มต้นเป็นรอตรวจสอบ
-      /* 
-      // 💡 ถ้าในตาราง shops ของคุณมีคอลัมน์เก็บชื่อรูป ให้เอาคอมเมนต์ออก แล้วแก้ชื่อคอลัมน์ให้ตรงครับ
-      .input('img_owner', sql.NVarChar, imageOwnerPath)
-      .input('img_location', sql.NVarChar, imageLocationPath)
-      */
-      .query(`
-        INSERT INTO shops (
-          user_id, category_id, shop_name, 
-          sell_online, sell_at_shop, sell_at_home, 
-          need_delivery, need_marketing, 
-          latitude, longitude, status
-        ) 
-        VALUES (
-          @user_id, @category_id, @shop_name, 
-          @sell_online, @sell_at_shop, @sell_at_home, 
-          @need_delivery, @need_marketing, 
-          @latitude, @longitude, @status
-        )
-      `);
-
-    console.log("✅ บันทึกข้อมูลร้านค้าลง Database สำเร็จ:", shopName);
-
-    res.status(200).json({ 
-      success: true, 
-      message: "บันทึกข้อมูลร้านค้าสำเร็จเรียบร้อยแล้ว" 
-    });
-
-  } catch (error) {
-    console.error("❌ Error registering shop:", error);
-    res.status(500).json({ success: false, error: error.message });
   }
 });
 
