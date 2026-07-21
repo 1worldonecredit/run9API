@@ -3295,20 +3295,57 @@ app.post('/api/register-shop', uploadShopFields, async (req, res) => {
       lng
     } = req.body;
 
-    // เช็กว่ามีไฟล์ภาพครบไหม 
     const files = req.files || {};
-    const imageOwnerPath = files.imageOwner ? files.imageOwner[0].path : null;
-    const imageLocationPath = files.imageLocation ? files.imageLocation[0].path : null;
-    const imageProductReadyPath = files.imageProductReady ? files.imageProductReady[0].path : null;
-    const imagePackagingPath = files.imagePackaging ? files.imagePackaging[0].path : null;
-    const imageReadyToShipPath = files.imageReadyToShip ? files.imageReadyToShip[0].path : null;
-    const imageIdCardPath = files.imageIdCard ? files.imageIdCard[0].path : null;
+    // เก็บ Path ของรูปภาพ (แปลง \ เป็น / เพื่อให้ URL ใช้งานบนเว็บได้ง่าย)
+    const imageOwnerPath = files.imageOwner ? files.imageOwner[0].path.replace(/\\/g, '/') : null;
+    const imageLocationPath = files.imageLocation ? files.imageLocation[0].path.replace(/\\/g, '/') : null;
+    const imageProductReadyPath = files.imageProductReady ? files.imageProductReady[0].path.replace(/\\/g, '/') : null;
+    const imagePackagingPath = files.imagePackaging ? files.imagePackaging[0].path.replace(/\\/g, '/') : null;
+    const imageReadyToShipPath = files.imageReadyToShip ? files.imageReadyToShip[0].path.replace(/\\/g, '/') : null;
+    const imageIdCardPath = files.imageIdCard ? files.imageIdCard[0].path.replace(/\\/g, '/') : null;
 
-    // TODO: ตรงนี้คือจุดที่คุณสามารถเขียนคำสั่ง SQL (pool.request().query(...)) 
-    // เพื่อบันทึกข้อมูลลง Database ของคุณได้เลยครับ
-    // เช่น INSERT INTO Shops (ShopName, CategoryID, Lat, Lng, ImageOwner, ...) VALUES (...)
+    // ⚠️ สำคัญ: FormData จากหน้าเว็บจะส่ง boolean มาเป็นข้อความ 'true'/'false' ต้องแปลงเป็น 1 หรือ 0 สำหรับ SQL (BIT)
+    const isSellOnline = (sellOnline === 'true') ? 1 : 0;
+    const isSellAtShop = (sellAtStore === 'true') ? 1 : 0;
+    const isSellAtHome = (sellAtHome === 'true') ? 1 : 0;
+    const isNeedDelivery = (deliveryService === 'true') ? 1 : 0;
+    const isNeedMarketing = (marketingSupport === 'true') ? 1 : 0;
 
-    console.log("รับข้อมูลร้านค้าสำเร็จ:", shopName, lat, lng);
+    // 🚀 เขียนข้อมูลลง Database
+    // หมายเหตุ: user_id ตอนนี้ผมใส่ 1 ไว้เป็นค่าตั้งต้นก่อน (ถ้ามีระบบ Login ค่อยดึง id ของคนที่ล็อกอินมาใส่)
+    await pool.request()
+      .input('user_id', sql.Int, 1) // สมมติว่า user_id คือ 1
+      .input('category_id', sql.Int, categoryId)
+      .input('shop_name', sql.NVarChar, shopName)
+      .input('sell_online', sql.Bit, isSellOnline)
+      .input('sell_at_shop', sql.Bit, isSellAtShop)
+      .input('sell_at_home', sql.Bit, isSellAtHome)
+      .input('need_delivery', sql.Bit, isNeedDelivery)
+      .input('need_marketing', sql.Bit, isNeedMarketing)
+      .input('latitude', sql.NVarChar, String(lat))
+      .input('longitude', sql.NVarChar, String(lng))
+      .input('status', sql.NVarChar, 'Pending') // ตั้งสถานะเริ่มต้นเป็นรอตรวจสอบ
+      /* 
+      // 💡 ถ้าในตาราง shops ของคุณมีคอลัมน์เก็บชื่อรูป ให้เอาคอมเมนต์ออก แล้วแก้ชื่อคอลัมน์ให้ตรงครับ
+      .input('img_owner', sql.NVarChar, imageOwnerPath)
+      .input('img_location', sql.NVarChar, imageLocationPath)
+      */
+      .query(`
+        INSERT INTO shops (
+          user_id, category_id, shop_name, 
+          sell_online, sell_at_shop, sell_at_home, 
+          need_delivery, need_marketing, 
+          latitude, longitude, status
+        ) 
+        VALUES (
+          @user_id, @category_id, @shop_name, 
+          @sell_online, @sell_at_shop, @sell_at_home, 
+          @need_delivery, @need_marketing, 
+          @latitude, @longitude, @status
+        )
+      `);
+
+    console.log("✅ บันทึกข้อมูลร้านค้าลง Database สำเร็จ:", shopName);
 
     res.status(200).json({ 
       success: true, 
@@ -3316,7 +3353,7 @@ app.post('/api/register-shop', uploadShopFields, async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error registering shop:", error);
+    console.error("❌ Error registering shop:", error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
