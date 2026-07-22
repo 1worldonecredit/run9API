@@ -3358,6 +3358,26 @@ app.get('/api/shop-categories', async (req, res) => {
 });
 
 
+// ==============================================================
+// 🛡️ API: สำหรับ Admin ดึงข้อมูลร้านค้าทั้งหมด (แบ่งตาม Status)
+// ==============================================================
+app.get('/api/admin/shops', async (req, res) => {
+  try {
+    let pool = await sql.connect(config);
+    
+    // ดึงข้อมูลร้านค้าทั้งหมด เรียงจากร้านที่สมัครล่าสุดขึ้นก่อน
+    const result = await pool.request().query(`
+      SELECT * FROM shops 
+      ORDER BY id DESC
+    `);
+
+    res.json({ success: true, data: result.recordset });
+  } catch (error) {
+    console.error("🔥 Error fetching admin shops:", error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
