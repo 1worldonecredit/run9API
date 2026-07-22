@@ -3391,6 +3391,71 @@ app.get('/api/admin/shops', async (req, res) => {
   }
 });
 
+
+// =========================================================================
+// 🌟 API สำหรับดึงข้อมูลร้านค้า + สินค้ารอตรวจ (แสดงในหน้า Modal ของ Admin)
+// =========================================================================
+app.get('/api/admin/shops/:shop_id/details', async (req, res) => {
+    try {
+        const { shop_id } = req.params;
+
+        // 1. ดึงข้อมูลร้านค้า (Shop Details)
+        // (ใช้ new sql.Request() เพราะเชื่อม Database ไว้แล้วจากด้านบนของ server.js)
+        const shopReq = new sql.Request();
+        shopReq.input('shop_id', sql.Int, shop_id);
+        const shopResult = await shopReq.query(`
+            SELECT * FROM shops 
+            WHERE id = @shop_id
+        `);
+
+        if (shopResult.recordset.length === 0) {
+            return res.status(404).json({ message: 'ไม่พบข้อมูลร้านค้านี้' });
+        }
+        const shopData = shopResult.recordset[0];
+
+        // 2. ดึงข้อมูลสินค้าที่รอตรวจสอบ (Pending Revisions) จากตารางพักข้อมูล
+        const revReq = new sql.Request();
+        revReq.input('shop_id', sql.Int, shop_id);
+        const revisionsResult = await revReq.query(`
+            SELECT 
+                id AS revision_id,
+                product_id,
+                revision_type,
+                original_data,
+                proposed_data,
+                status,
+                admin_id,
+                resolved_at
+            FROM product_revisions
+            WHERE shop_id = @shop_id AND status = 'PENDING'
+            ORDER BY created_at DESC
+        `);
+
+        // 3. แปลงข้อมูล JSON จาก Database ให้เป็น Object พร้อมใช้ใน Frontend
+        const pendingProducts = revisionsResult.recordset.map(rev => {
+            return {
+                revision_id: rev.revision_id,
+                product_id: rev.product_id,
+                revision_type: rev.revision_type, // 'CREATE', 'UPDATE', 'DELETE'
+                
+                // แปลง String JSON กลับเป็น Object (รองรับภาษาไทยได้ปกติ)
+                original_data: rev.original_data ? JSON.parse(rev.original_data) : null,
+                proposed_data: rev.proposed_data ? JSON.parse(rev.proposed_data) : null,
+            };
+        });
+
+        // 4. ส่งข้อมูลทั้งหมดกลับไปให้ Frontend
+        res.status(200).json({
+            shop: shopData,
+            pending_products: pendingProducts
+        });
+
+    } catch (error) {
+        console.error("Error fetching shop details for admin:", error);
+        res.status(500).json({ message: 'เกิดข้อผิดพลาดในการดึงข้อมูลจากเซิร์ฟเวอร์' });
+    }
+});
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
