@@ -3456,6 +3456,40 @@ app.get('/api/admin/shops/:shop_id/details', async (req, res) => {
     }
 });
 
+
+// =========================================================================
+// 🌟 API สำหรับดึงข้อมูลคำขอเปิดร้าน (แสดงใน Modal)
+// =========================================================================
+app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
+    try {
+        const { shop_id } = req.params;
+
+        const request = new sql.Request();
+        request.input('shop_id', sql.Int, shop_id);
+        
+        // ดึงข้อมูลทั้งหมดของร้านค้าจากตาราง shops
+        const result = await request.query(`
+            SELECT 
+                id, user_id, category_id, shop_name, 
+                img_owner, img_location, img_product_ready, 
+                img_packaging, img_ready_to_ship, img_id_card, 
+                latitude, longitude, status 
+            FROM shops 
+            WHERE id = @shop_id
+        `);
+
+        if (result.recordset.length === 0) {
+            return res.status(404).json({ message: 'ไม่พบข้อมูลคำขอเปิดร้านค้านี้' });
+        }
+
+        res.status(200).json(result.recordset[0]);
+
+    } catch (error) {
+        console.error("Error fetching shop registration details:", error);
+        res.status(500).json({ message: 'เกิดข้อผิดพลาดในการดึงข้อมูลจากเซิร์ฟเวอร์' });
+    }
+});
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
