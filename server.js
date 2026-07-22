@@ -254,8 +254,9 @@ app.post('/api/register-shop', uploadShopFields, async (req, res) => {
 
     // 🚀 เขียนข้อมูลลง Database
     // หมายเหตุ: user_id ตอนนี้ผมใส่ 1 ไว้เป็นค่าตั้งต้นก่อน (ถ้ามีระบบ Login ค่อยดึง id ของคนที่ล็อกอินมาใส่)
+    // 🚀 เขียนข้อมูลลง Database (อัปเดตเพิ่มการบันทึกรูปภาพ)
     await pool.request()
-      .input('user_id', sql.Int, 1) // สมมติว่า user_id คือ 1
+      .input('user_id', sql.Int, 1) 
       .input('category_id', sql.Int, categoryId)
       .input('shop_name', sql.NVarChar, shopName)
       .input('sell_online', sql.Bit, isSellOnline)
@@ -265,39 +266,32 @@ app.post('/api/register-shop', uploadShopFields, async (req, res) => {
       .input('need_marketing', sql.Bit, isNeedMarketing)
       .input('latitude', sql.NVarChar, String(lat))
       .input('longitude', sql.NVarChar, String(lng))
-      .input('status', sql.NVarChar, 'Pending') // ตั้งสถานะเริ่มต้นเป็นรอตรวจสอบ
-      /* 
-      // 💡 ถ้าในตาราง shops ของคุณมีคอลัมน์เก็บชื่อรูป ให้เอาคอมเมนต์ออก แล้วแก้ชื่อคอลัมน์ให้ตรงครับ
+      .input('status', sql.NVarChar, 'Pending') 
+      // 🌟 เพิ่มบรรทัดเหล่านี้เพื่อบันทึก URL รูปภาพลงฐานข้อมูล
       .input('img_owner', sql.NVarChar, imageOwnerPath)
       .input('img_location', sql.NVarChar, imageLocationPath)
-      */
+      .input('img_product_ready', sql.NVarChar, imageProductReadyPath)
+      .input('img_packaging', sql.NVarChar, imagePackagingPath)
+      .input('img_ready_to_ship', sql.NVarChar, imageReadyToShipPath)
+      .input('img_id_card', sql.NVarChar, imageIdCardPath)
       .query(`
         INSERT INTO shops (
           user_id, category_id, shop_name, 
           sell_online, sell_at_shop, sell_at_home, 
           need_delivery, need_marketing, 
-          latitude, longitude, status
+          latitude, longitude, status,
+          img_owner, img_location, img_product_ready, 
+          img_packaging, img_ready_to_ship, img_id_card
         ) 
         VALUES (
           @user_id, @category_id, @shop_name, 
           @sell_online, @sell_at_shop, @sell_at_home, 
           @need_delivery, @need_marketing, 
-          @latitude, @longitude, @status
+          @latitude, @longitude, @status,
+          @img_owner, @img_location, @img_product_ready, 
+          @img_packaging, @img_ready_to_ship, @img_id_card
         )
       `);
-
-    console.log("✅ บันทึกข้อมูลร้านค้าลง Database สำเร็จ:", shopName);
-
-    res.status(200).json({ 
-      success: true, 
-      message: "บันทึกข้อมูลร้านค้าสำเร็จเรียบร้อยแล้ว" 
-    });
-
-  } catch (error) {
-    console.error("❌ Error registering shop:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 
 
