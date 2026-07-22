@@ -3371,18 +3371,19 @@ app.get('/api/shop-categories', async (req, res) => {
 
 
 // ==============================================================
-// 🛡️ API: สำหรับ Admin ดึงข้อมูลร้านค้าทั้งหมด (แบ่งตาม Status)
+// ==============================================================
+// 🛡️ API: สำหรับ Admin ดึงข้อมูลร้านค้าทั้งหมด (ดึงข้อมูลประเทศและชื่อผู้ใช้มาด้วย)
 // ==============================================================
 app.get('/api/admin/shops', async (req, res) => {
   try {
     let pool = await sql.connect(config);
-    
-    // ดึงข้อมูลร้านค้าทั้งหมด เรียงจากร้านที่สมัครล่าสุดขึ้นก่อน
+    // 🌟 JOIN ตาราง UsersRegister เพื่อเอา Username และ Country ของคนที่สมัครมาใช้
     const result = await pool.request().query(`
-      SELECT * FROM shops 
-      ORDER BY id DESC
+      SELECT s.*, u.Username, u.Country 
+      FROM shops s
+      LEFT JOIN UsersRegister u ON s.user_id = u.Id
+      ORDER BY s.id DESC
     `);
-
     res.json({ success: true, data: result.recordset });
   } catch (error) {
     console.error("🔥 Error fetching admin shops:", error.message);
