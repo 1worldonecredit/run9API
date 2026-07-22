@@ -292,6 +292,18 @@ app.post('/api/register-shop', uploadShopFields, async (req, res) => {
           @img_packaging, @img_ready_to_ship, @img_id_card
         )
       `);
+      console.log("✅ บันทึกข้อมูลร้านค้าลง Database สำเร็จ:", shopName);
+
+    res.status(200).json({ 
+      success: true, 
+      message: "บันทึกข้อมูลร้านค้าสำเร็จเรียบร้อยแล้ว" 
+    });
+
+  } catch (error) {
+    console.error("❌ Error registering shop:", error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+}); // 🌟 ปิด API /api/register-shop ตรงนี้ครับ
 
 
 
