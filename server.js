@@ -3558,14 +3558,14 @@ app.put('/api/update-shop/:id', upload.fields([
         if (req.files && req.files['imageReadyToShip']) { request.input('imgReadyToShip', sql.NVarChar, req.files['imageReadyToShip'][0].path); imageUpdateQuery += ', img_ready_to_ship = @imgReadyToShip'; }
         if (req.files && req.files['imageIdCard']) { request.input('imgIdCard', sql.NVarChar, req.files['imageIdCard'][0].path); imageUpdateQuery += ', img_id_card = @imgIdCard'; }
 
-        const query = `
+       const query = `
             UPDATE shops 
             SET 
                 shop_name = @shopName, category_id = @categoryId, latitude = @lat, longitude = @lng,
                 sell_online = @sellOnline, sell_at_shop = @sellAtStore, sell_at_home = @sellAtHome,
                 need_delivery = @needDelivery, need_marketing = @needMarketing,
                 business_type = @businessType, has_branches = @hasBranches,
-                status = 'PENDING', rejection_reasons = NULL
+                status = 'PENDING'
                 ${imageUpdateQuery}
             WHERE id = @shopId
         `;
