@@ -3456,22 +3456,22 @@ app.get('/api/admin/shops/:shop_id/details', async (req, res) => {
     }
 });
 
-
-// =========================================================================
-// 🌟 API สำหรับดึงข้อมูลคำขอเปิดร้าน (แสดงใน Modal)
-// =========================================================================
 app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
     try {
         const { shop_id } = req.params;
-
         const request = new sql.Request();
         request.input('shop_id', sql.Int, shop_id);
         
-        // ดึงข้อมูลทั้งหมดของร้านค้าจากตาราง shops
-       const result = await request.query(`
-
-         SELECT * FROM shops
-          WHERE id = @shop_id
+        // 🌟 ปรับ SQL ให้ JOIN เอาชื่อหมวดหมู่ และที่อยู่จากตาราง Address มาด้วย
+        const result = await request.query(`
+            SELECT 
+                s.*, 
+                c.category_name, -- ดึงชื่อหมวดหมู่จากตาราง shop_categories
+                a.address_full   -- ดึงที่อยู่แบบเต็มจากตาราง Address Shop (ปรับชื่อคอลัมน์ตาม DB ของคุณ)
+            FROM shops s
+            LEFT JOIN shop_categories c ON s.category_id = c.id
+            LEFT JOIN address_shops a ON s.id = a.shop_id
+            WHERE s.id = @shop_id
         `);
 
         if (result.recordset.length === 0) {
@@ -3479,7 +3479,6 @@ app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
         }
 
         res.status(200).json(result.recordset[0]);
-
     } catch (error) {
         console.error("Error fetching shop registration details:", error);
         res.status(500).json({ message: 'เกิดข้อผิดพลาดในการดึงข้อมูลจากเซิร์ฟเวอร์' });
