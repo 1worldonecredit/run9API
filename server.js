@@ -3627,9 +3627,8 @@ app.put('/api/admin/shops/:id/status', async (req, res) => {
     }
 });
 
-
 // =========================================================================
-// 🌟 API ดึงข้อมูลร้านค้าของฉัน (เพื่อนำมาแสดงตอนรอตรวจ หรือ โดนตีกลับ)
+// 🌟 API ดึงข้อมูลร้านค้าของฉัน (ปรับแก้ไม่ให้เด้ง Error 404 สำหรับผู้ใช้ใหม่)
 // =========================================================================
 app.get('/api/shops/my-shop', async (req, res) => {
     try {
@@ -3643,7 +3642,6 @@ app.get('/api/shops/my-shop', async (req, res) => {
         const request = pool.request();
         request.input('userId', sql.Int, userId);
         
-        // 🌟 ดึงข้อมูลร้านค้า JOIN กับที่อยู่ เพื่อส่งกลับไปแสดงที่หน้าเว็บ
         const query = `
             SELECT s.*, a.address_full, a.address_detail, a.sub_district, a.district, a.province, a.postal_code
             FROM shops s
@@ -3654,9 +3652,12 @@ app.get('/api/shops/my-shop', async (req, res) => {
         const result = await request.query(query);
 
         if (result.recordset.length > 0) {
+            // ถ้ามีร้าน โยนข้อมูลกลับไป
             res.status(200).json(result.recordset[0]);
         } else {
-            res.status(404).json({ success: false, message: 'ไม่พบข้อมูลร้านค้า' });
+            // 🌟 จุดที่แก้ไข: เปลี่ยนจาก 404 เป็น 200 แล้วส่งก้อนว่างๆ กลับไปแทน 
+            // ฝั่งหน้าบ้านจะได้รู้ว่า "สำเร็จแล้ว แต่แค่ยังไม่มีร้าน" Console จะได้ไม่ขึ้นสีแดงครับ
+            res.status(200).json({}); 
         }
     } catch (error) {
         console.error("Error fetching my shop:", error);
