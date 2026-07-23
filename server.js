@@ -3468,14 +3468,10 @@ app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
         request.input('shop_id', sql.Int, shop_id);
         
         // ดึงข้อมูลทั้งหมดของร้านค้าจากตาราง shops
-        const result = await request.query(`
-            SELECT 
-                id, user_id, category_id, shop_name, 
-                img_owner, img_location, img_product_ready, 
-                img_packaging, img_ready_to_ship, img_id_card, 
-                latitude, longitude, status 
-            FROM shops 
-            WHERE id = @shop_id
+       const result = await request.query(`
+
+         SELECT * FROM shops
+          WHERE id = @shop_id
         `);
 
         if (result.recordset.length === 0) {
