@@ -207,7 +207,6 @@ const shopStorage = multer.diskStorage({
 
 // ✅ สร้างตัวแปร uploadShop ตัวหลักแค่ตัวเดียวพอ
 const upload = multer({ dest: 'uploads/' });
-
 // =========================================================================
 // 🌟 API สำหรับ "สมัครเปิดร้านค้าใหม่" (สร้างข้อมูลใหม่)
 // =========================================================================
@@ -220,18 +219,20 @@ app.post('/api/register-shop', upload.fields([
     { name: 'imageIdCard', maxCount: 1 }
 ]), async (req, res) => {
     try {
-        // 🌟 1. เชื่อมต่อฐานข้อมูล (ที่คุณทักท้วงมา ถูกต้องเป๊ะครับ!)
+        // 🌟 1. เชื่อมต่อฐานข้อมูล
         let pool = await sql.connect(config);
 
         const { 
             userId, shopName, categoryId, lat, lng, 
             sellOnline, sellAtStore, sellAtHome, 
             deliveryService, marketingSupport,
-            businessType, hasBranches 
+            businessType, hasBranches,
+            // 🌟 รับค่าที่อยู่เพิ่มเติมจากหน้าบ้าน
+            addressFull, addressDetail, subDistrict, district, province, postalCode 
         } = req.body;
 
         // 🛡️ ด่านตรวจ: เช็คว่า User นี้เคยมีข้อมูลในตาราง shops หรือยัง
-        const checkRequest = pool.request(); // 🌟 ใช้ pool.request()
+        const checkRequest = pool.request(); 
         checkRequest.input('checkUserId', sql.Int, userId);
         const checkResult = await checkRequest.query(`SELECT id FROM shops WHERE user_id = @checkUserId`);
 
@@ -239,7 +240,7 @@ app.post('/api/register-shop', upload.fields([
             return res.status(400).json({ success: false, message: 'คุณได้ส่งคำขอเปิดร้านไปแล้ว ไม่สามารถเปิดซ้ำได้ (หากมีหลายสาขา กรุณาติดต่อแอดมิน)' });
         }
 
-        const request = pool.request(); // 🌟 ใช้ pool.request()
+        const request = pool.request(); 
         request.input('userId', sql.Int, userId);
         request.input('shopName', sql.NVarChar, shopName);
         request.input('categoryId', sql.Int, categoryId);
@@ -285,11 +286,20 @@ app.post('/api/register-shop', upload.fields([
         const result = await request.query(insertShopQuery);
         const newShopId = result.recordset[0].id; 
 
-        // 🌟 บันทึกพิกัดลงตาราง address_shops
-        const addressRequest = pool.request(); // 🌟 ใช้ pool.request()
+        // 🌟 บันทึกพิกัดและที่อยู่ลงตาราง address_shops (อัปเดตใหม่ให้ครบทุกคอลัมน์)
+        const addressRequest = pool.request(); 
         addressRequest.input('shopId', sql.Int, newShopId);
-        addressRequest.input('addressFull', sql.NVarChar, `Lat: ${lat}, Lng: ${lng}`); 
-        await addressRequest.query(`INSERT INTO address_shops (shop_id, address_full) VALUES (@shopId, @addressFull)`);
+        addressRequest.input('addressFull', sql.NVarChar, addressFull || `Lat: ${lat}, Lng: ${lng}`); 
+        addressRequest.input('addressDetail', sql.NVarChar, addressDetail || null);
+        addressRequest.input('subDistrict', sql.NVarChar, subDistrict || null);
+        addressRequest.input('district', sql.NVarChar, district || null);
+        addressRequest.input('province', sql.NVarChar, province || null);
+        addressRequest.input('postalCode', sql.NVarChar, postalCode || null);
+
+        await addressRequest.query(`
+            INSERT INTO address_shops (shop_id, address_full, address_detail, sub_district, district, province, postal_code) 
+            VALUES (@shopId, @addressFull, @addressDetail, @subDistrict, @district, @province, @postalCode)
+        `);
 
         res.status(201).json({ success: true, message: 'ส่งข้อมูลเปิดร้านสำเร็จ' });
     } catch (error) {
@@ -297,7 +307,6 @@ app.post('/api/register-shop', upload.fields([
         res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล' });
     }
 });
-
 
 
 // ==============================================================
@@ -3500,7 +3509,6 @@ app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
 // =========================================================================
 // 🌟 API สำหรับ "อัปเดตข้อมูลร้านค้า" (เมื่อลูกค้ายื่นแก้ไขจากที่ถูกตีกลับ)
 // =========================================================================
-
 // =========================================================================
 // 🌟 API สำหรับ "อัปเดตข้อมูลร้านค้า" (เมื่อลูกค้ายื่นแก้ไขจากที่ถูกตีกลับ)
 // =========================================================================
@@ -3521,10 +3529,12 @@ app.put('/api/update-shop/:id', upload.fields([
             shopName, categoryId, lat, lng, 
             sellOnline, sellAtStore, sellAtHome, 
             deliveryService, marketingSupport,
-            businessType, hasBranches
+            businessType, hasBranches,
+            // 🌟 รับค่าที่อยู่เพิ่มเติมจากหน้าบ้าน
+            addressFull, addressDetail, subDistrict, district, province, postalCode 
         } = req.body;
 
-        const request = pool.request(); // 🌟 ใช้ pool.request()
+        const request = pool.request(); 
         request.input('shopId', sql.Int, shopId);
         request.input('shopName', sql.NVarChar, shopName);
         request.input('categoryId', sql.Int, categoryId);
@@ -3561,16 +3571,26 @@ app.put('/api/update-shop/:id', upload.fields([
         `;
         await request.query(query);
 
-        // 🌟 อัปเดตที่อยู่
-        const addressRequest = pool.request(); // 🌟 ใช้ pool.request()
+        // 🌟 อัปเดตที่อยู่ (อัปเดตใหม่ให้ครบทุกคอลัมน์)
+        const addressRequest = pool.request(); 
         addressRequest.input('shopId', sql.Int, shopId);
-        addressRequest.input('addressFull', sql.NVarChar, `Lat: ${lat}, Lng: ${lng}`);
+        addressRequest.input('addressFull', sql.NVarChar, addressFull || `Lat: ${lat}, Lng: ${lng}`);
+        addressRequest.input('addressDetail', sql.NVarChar, addressDetail || null);
+        addressRequest.input('subDistrict', sql.NVarChar, subDistrict || null);
+        addressRequest.input('district', sql.NVarChar, district || null);
+        addressRequest.input('province', sql.NVarChar, province || null);
+        addressRequest.input('postalCode', sql.NVarChar, postalCode || null);
 
         await addressRequest.query(`
             IF EXISTS (SELECT 1 FROM address_shops WHERE shop_id = @shopId)
-                UPDATE address_shops SET address_full = @addressFull WHERE shop_id = @shopId
+                UPDATE address_shops 
+                SET address_full = @addressFull, address_detail = @addressDetail, 
+                    sub_district = @subDistrict, district = @district, 
+                    province = @province, postal_code = @postalCode
+                WHERE shop_id = @shopId
             ELSE
-                INSERT INTO address_shops (shop_id, address_full) VALUES (@shopId, @addressFull)
+                INSERT INTO address_shops (shop_id, address_full, address_detail, sub_district, district, province, postal_code) 
+                VALUES (@shopId, @addressFull, @addressDetail, @subDistrict, @district, @province, @postalCode)
         `);
 
         res.status(200).json({ success: true, message: 'อัปเดตข้อมูลคำขอเปิดร้านเรียบร้อยแล้ว' });
@@ -3579,7 +3599,6 @@ app.put('/api/update-shop/:id', upload.fields([
         res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการอัปเดตข้อมูล' });
     }
 });
-
 
 // =========================================================================
 // 🌟 API สำหรับ Admin: อัปเดตสถานะร้านค้า (อนุมัติ หรือ ตีกลับ)
