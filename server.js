@@ -206,7 +206,7 @@ const shopStorage = multer.diskStorage({
 });
 
 // ✅ สร้างตัวแปร uploadShop ตัวหลักแค่ตัวเดียวพอ
-const uploadShop = multer({ storage: shopStorage });
+const upload = multer({ dest: 'uploads/' });
 
 // =========================================================================
 // 🌟 API สำหรับ "สมัครเปิดร้านค้าใหม่" (สร้างข้อมูลใหม่)
