@@ -3490,6 +3490,10 @@ app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
 // =========================================================================
 // เพิ่ม 2 บรรทัดนี้เหนือ app.put
 
+
+// =========================================================================
+// 🌟 API สำหรับ "อัปเดตข้อมูลร้านค้า" (เมื่อลูกค้ายื่นแก้ไขจากที่ถูกตีกลับ)
+// =========================================================================
 const upload = multer({ dest: 'uploads/' }); // หรือโฟลเดอร์ที่คุณใช้เก็บรูปปัจจุบัน
 app.put('/api/update-shop/:id', upload.fields([
     { name: 'imageOwner', maxCount: 1 },
@@ -3524,27 +3528,27 @@ app.put('/api/update-shop/:id', upload.fields([
         // 🌟 สร้าง String สำหรับอัปเดตรูปภาพ (เช็คว่ามีรูปส่งมาใหม่ไหม)
         let imageUpdateQuery = '';
         
-        if (req.files['imageOwner']) {
+        if (req.files && req.files['imageOwner']) {
             request.input('imgOwner', sql.NVarChar, req.files['imageOwner'][0].path);
             imageUpdateQuery += ', img_owner = @imgOwner';
         }
-        if (req.files['imageLocation']) {
+        if (req.files && req.files['imageLocation']) {
             request.input('imgLocation', sql.NVarChar, req.files['imageLocation'][0].path);
             imageUpdateQuery += ', img_location = @imgLocation';
         }
-        if (req.files['imageProductReady']) {
+        if (req.files && req.files['imageProductReady']) {
             request.input('imgProductReady', sql.NVarChar, req.files['imageProductReady'][0].path);
             imageUpdateQuery += ', img_product_ready = @imgProductReady';
         }
-        if (req.files['imagePackaging']) {
+        if (req.files && req.files['imagePackaging']) {
             request.input('imgPackaging', sql.NVarChar, req.files['imagePackaging'][0].path);
             imageUpdateQuery += ', img_packaging = @imgPackaging';
         }
-        if (req.files['imageReadyToShip']) {
+        if (req.files && req.files['imageReadyToShip']) {
             request.input('imgReadyToShip', sql.NVarChar, req.files['imageReadyToShip'][0].path);
             imageUpdateQuery += ', img_ready_to_ship = @imgReadyToShip';
         }
-        if (req.files['imageIdCard']) {
+        if (req.files && req.files['imageIdCard']) {
             request.input('imgIdCard', sql.NVarChar, req.files['imageIdCard'][0].path);
             imageUpdateQuery += ', img_id_card = @imgIdCard';
         }
@@ -3569,6 +3573,23 @@ app.put('/api/update-shop/:id', upload.fields([
         `;
 
         await request.query(query);
+
+        // =====================================================================
+        // 🌟 ส่วนที่เพิ่มใหม่: บันทึกข้อมูลที่อยู่ลงตาราง address_shops
+        // =====================================================================
+        const addressRequest = new sql.Request();
+        addressRequest.input('shopId', sql.Int, shopId);
+        // สร้างข้อความพิกัดไปเก็บไว้ก่อน ถ้าในอนาคตมีส่งที่อยู่เต็มมาค่อยเปลี่ยนตรงนี้
+        addressRequest.input('addressFull', sql.NVarChar, `Lat: ${lat}, Lng: ${lng}`);
+
+        // ใช้คำสั่งเพื่อเช็คว่ามีที่อยู่เดิมไหม ถ้ามีให้อัปเดต ถ้าไม่มีให้สร้างใหม่ (ป้องกัน Error)
+        await addressRequest.query(`
+            IF EXISTS (SELECT 1 FROM address_shops WHERE shop_id = @shopId)
+                UPDATE address_shops SET address_full = @addressFull WHERE shop_id = @shopId
+            ELSE
+                INSERT INTO address_shops (shop_id, address_full) VALUES (@shopId, @addressFull)
+        `);
+        // =====================================================================
 
         res.status(200).json({ success: true, message: 'อัปเดตข้อมูลคำขอเปิดร้านเรียบร้อยแล้ว' });
 
