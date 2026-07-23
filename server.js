@@ -3488,6 +3488,9 @@ app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
 // =========================================================================
 // 🌟 API สำหรับ "อัปเดตข้อมูลร้านค้า" (เมื่อลูกค้ายื่นแก้ไขจากที่ถูกตีกลับ)
 // =========================================================================
+// เพิ่ม 2 บรรทัดนี้เหนือ app.put
+
+const upload = multer({ dest: 'uploads/' }); // หรือโฟลเดอร์ที่คุณใช้เก็บรูปปัจจุบัน
 app.put('/api/update-shop/:id', upload.fields([
     { name: 'imageOwner', maxCount: 1 },
     { name: 'imageLocation', maxCount: 1 },
