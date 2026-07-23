@@ -3485,6 +3485,96 @@ app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
     }
 });
 
+// =========================================================================
+// 🌟 API สำหรับ "อัปเดตข้อมูลร้านค้า" (เมื่อลูกค้ายื่นแก้ไขจากที่ถูกตีกลับ)
+// =========================================================================
+app.put('/api/update-shop/:id', upload.fields([
+    { name: 'imageOwner', maxCount: 1 },
+    { name: 'imageLocation', maxCount: 1 },
+    { name: 'imageProductReady', maxCount: 1 },
+    { name: 'imagePackaging', maxCount: 1 },
+    { name: 'imageReadyToShip', maxCount: 1 },
+    { name: 'imageIdCard', maxCount: 1 }
+]), async (req, res) => {
+    try {
+        const shopId = req.params.id;
+        const { 
+            shopName, categoryId, lat, lng, 
+            sellOnline, sellAtStore, sellAtHome, 
+            deliveryService, marketingSupport 
+        } = req.body;
+
+        const request = new sql.Request();
+        request.input('shopId', sql.Int, shopId);
+        request.input('shopName', sql.NVarChar, shopName);
+        request.input('categoryId', sql.Int, categoryId);
+        request.input('lat', sql.NVarChar, lat);
+        request.input('lng', sql.NVarChar, lng);
+        
+        // แปลงค่า 'true'/'false' จาก FormData ให้เป็น 1/0 สำหรับ SQL Bit
+        request.input('sellOnline', sql.Bit, sellOnline === 'true' ? 1 : 0);
+        request.input('sellAtStore', sql.Bit, sellAtStore === 'true' ? 1 : 0);
+        request.input('sellAtHome', sql.Bit, sellAtHome === 'true' ? 1 : 0);
+        request.input('needDelivery', sql.Bit, deliveryService === 'true' ? 1 : 0);
+        request.input('needMarketing', sql.Bit, marketingSupport === 'true' ? 1 : 0);
+
+        // 🌟 สร้าง String สำหรับอัปเดตรูปภาพ (เช็คว่ามีรูปส่งมาใหม่ไหม)
+        let imageUpdateQuery = '';
+        
+        if (req.files['imageOwner']) {
+            request.input('imgOwner', sql.NVarChar, req.files['imageOwner'][0].path);
+            imageUpdateQuery += ', img_owner = @imgOwner';
+        }
+        if (req.files['imageLocation']) {
+            request.input('imgLocation', sql.NVarChar, req.files['imageLocation'][0].path);
+            imageUpdateQuery += ', img_location = @imgLocation';
+        }
+        if (req.files['imageProductReady']) {
+            request.input('imgProductReady', sql.NVarChar, req.files['imageProductReady'][0].path);
+            imageUpdateQuery += ', img_product_ready = @imgProductReady';
+        }
+        if (req.files['imagePackaging']) {
+            request.input('imgPackaging', sql.NVarChar, req.files['imagePackaging'][0].path);
+            imageUpdateQuery += ', img_packaging = @imgPackaging';
+        }
+        if (req.files['imageReadyToShip']) {
+            request.input('imgReadyToShip', sql.NVarChar, req.files['imageReadyToShip'][0].path);
+            imageUpdateQuery += ', img_ready_to_ship = @imgReadyToShip';
+        }
+        if (req.files['imageIdCard']) {
+            request.input('imgIdCard', sql.NVarChar, req.files['imageIdCard'][0].path);
+            imageUpdateQuery += ', img_id_card = @imgIdCard';
+        }
+
+        // 🌟 อัปเดตข้อมูล และเปลี่ยนสถานะกลับไปเป็น PENDING (รอตรวจสอบ) พร้อมลบประวัติการ Reject เดิมทิ้ง
+        const query = `
+            UPDATE shops 
+            SET 
+                shop_name = @shopName,
+                category_id = @categoryId,
+                latitude = @lat,
+                longitude = @lng,
+                sell_online = @sellOnline,
+                sell_at_shop = @sellAtStore,
+                sell_at_home = @sellAtHome,
+                need_delivery = @needDelivery,
+                need_marketing = @needMarketing,
+                status = 'PENDING',
+                rejection_reasons = NULL
+                ${imageUpdateQuery}
+            WHERE id = @shopId
+        `;
+
+        await request.query(query);
+
+        res.status(200).json({ success: true, message: 'อัปเดตข้อมูลคำขอเปิดร้านเรียบร้อยแล้ว' });
+
+    } catch (error) {
+        console.error("Error updating shop registration:", error);
+        res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการอัปเดตข้อมูล' });
+    }
+});
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
