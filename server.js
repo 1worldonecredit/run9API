@@ -208,102 +208,95 @@ const shopStorage = multer.diskStorage({
 // ✅ สร้างตัวแปร uploadShop ตัวหลักแค่ตัวเดียวพอ
 const uploadShop = multer({ storage: shopStorage });
 
-// ==========================================
-// 🚀 API: บันทึกข้อมูลเปิดร้านค้า (พร้อมอัปโหลดภาพ 6 รูป)
-// ==========================================
-// ✅ นำ uploadShop มากำหนด fields เพื่อเอาไปใช้ใน Route
-const uploadShopFields = uploadShop.fields([
-  { name: 'imageOwner', maxCount: 1 },
-  { name: 'imageLocation', maxCount: 1 },
-  { name: 'imageProductReady', maxCount: 1 },
-  { name: 'imagePackaging', maxCount: 1 },
-  { name: 'imageReadyToShip', maxCount: 1 },
-  { name: 'imageIdCard', maxCount: 1 }
-]);
+// =========================================================================
+// 🌟 API สำหรับ "สมัครเปิดร้านค้าใหม่" (สร้างข้อมูลใหม่)
+// =========================================================================
+app.post('/api/register-shop', upload.fields([
+    { name: 'imageOwner', maxCount: 1 },
+    { name: 'imageLocation', maxCount: 1 },
+    { name: 'imageProductReady', maxCount: 1 },
+    { name: 'imagePackaging', maxCount: 1 },
+    { name: 'imageReadyToShip', maxCount: 1 },
+    { name: 'imageIdCard', maxCount: 1 }
+]), async (req, res) => {
+    try {
+        // 🌟 1. เชื่อมต่อฐานข้อมูล (ที่คุณทักท้วงมา ถูกต้องเป๊ะครับ!)
+        let pool = await sql.connect(config);
 
-app.post('/api/register-shop', uploadShopFields, async (req, res) => {
-  try {
-    let pool = await sql.connect(config);
-    const {
-      shopName,
-      categoryId,
-      sellOnline,
-      sellAtStore,
-      sellAtHome,
-      deliveryService,
-      marketingSupport,
-      lat,
-      lng
-    } = req.body;
+        const { 
+            userId, shopName, categoryId, lat, lng, 
+            sellOnline, sellAtStore, sellAtHome, 
+            deliveryService, marketingSupport,
+            businessType, hasBranches 
+        } = req.body;
 
-    const files = req.files || {};
-    // เก็บ Path ของรูปภาพ (แปลง \ เป็น / เพื่อให้ URL ใช้งานบนเว็บได้ง่าย)
-    const imageOwnerPath = files.imageOwner ? files.imageOwner[0].path.replace(/\\/g, '/') : null;
-    const imageLocationPath = files.imageLocation ? files.imageLocation[0].path.replace(/\\/g, '/') : null;
-    const imageProductReadyPath = files.imageProductReady ? files.imageProductReady[0].path.replace(/\\/g, '/') : null;
-    const imagePackagingPath = files.imagePackaging ? files.imagePackaging[0].path.replace(/\\/g, '/') : null;
-    const imageReadyToShipPath = files.imageReadyToShip ? files.imageReadyToShip[0].path.replace(/\\/g, '/') : null;
-    const imageIdCardPath = files.imageIdCard ? files.imageIdCard[0].path.replace(/\\/g, '/') : null;
+        // 🛡️ ด่านตรวจ: เช็คว่า User นี้เคยมีข้อมูลในตาราง shops หรือยัง
+        const checkRequest = pool.request(); // 🌟 ใช้ pool.request()
+        checkRequest.input('checkUserId', sql.Int, userId);
+        const checkResult = await checkRequest.query(`SELECT id FROM shops WHERE user_id = @checkUserId`);
 
-    // ⚠️ สำคัญ: FormData จากหน้าเว็บจะส่ง boolean มาเป็นข้อความ 'true'/'false' ต้องแปลงเป็น 1 หรือ 0 สำหรับ SQL (BIT)
-    const isSellOnline = (sellOnline === 'true') ? 1 : 0;
-    const isSellAtShop = (sellAtStore === 'true') ? 1 : 0;
-    const isSellAtHome = (sellAtHome === 'true') ? 1 : 0;
-    const isNeedDelivery = (deliveryService === 'true') ? 1 : 0;
-    const isNeedMarketing = (marketingSupport === 'true') ? 1 : 0;
+        if (checkResult.recordset.length > 0) {
+            return res.status(400).json({ success: false, message: 'คุณได้ส่งคำขอเปิดร้านไปแล้ว ไม่สามารถเปิดซ้ำได้ (หากมีหลายสาขา กรุณาติดต่อแอดมิน)' });
+        }
 
-    // 🚀 เขียนข้อมูลลง Database
-    // หมายเหตุ: user_id ตอนนี้ผมใส่ 1 ไว้เป็นค่าตั้งต้นก่อน (ถ้ามีระบบ Login ค่อยดึง id ของคนที่ล็อกอินมาใส่)
-    // 🚀 เขียนข้อมูลลง Database (อัปเดตเพิ่มการบันทึกรูปภาพ)
-    await pool.request()
-      .input('user_id', sql.Int, 1) 
-      .input('category_id', sql.Int, categoryId)
-      .input('shop_name', sql.NVarChar, shopName)
-      .input('sell_online', sql.Bit, isSellOnline)
-      .input('sell_at_shop', sql.Bit, isSellAtShop)
-      .input('sell_at_home', sql.Bit, isSellAtHome)
-      .input('need_delivery', sql.Bit, isNeedDelivery)
-      .input('need_marketing', sql.Bit, isNeedMarketing)
-      .input('latitude', sql.NVarChar, String(lat))
-      .input('longitude', sql.NVarChar, String(lng))
-      .input('status', sql.NVarChar, 'Pending') 
-      // 🌟 เพิ่มบรรทัดเหล่านี้เพื่อบันทึก URL รูปภาพลงฐานข้อมูล
-      .input('img_owner', sql.NVarChar, imageOwnerPath)
-      .input('img_location', sql.NVarChar, imageLocationPath)
-      .input('img_product_ready', sql.NVarChar, imageProductReadyPath)
-      .input('img_packaging', sql.NVarChar, imagePackagingPath)
-      .input('img_ready_to_ship', sql.NVarChar, imageReadyToShipPath)
-      .input('img_id_card', sql.NVarChar, imageIdCardPath)
-      .query(`
-        INSERT INTO shops (
-          user_id, category_id, shop_name, 
-          sell_online, sell_at_shop, sell_at_home, 
-          need_delivery, need_marketing, 
-          latitude, longitude, status,
-          img_owner, img_location, img_product_ready, 
-          img_packaging, img_ready_to_ship, img_id_card
-        ) 
-        VALUES (
-          @user_id, @category_id, @shop_name, 
-          @sell_online, @sell_at_shop, @sell_at_home, 
-          @need_delivery, @need_marketing, 
-          @latitude, @longitude, @status,
-          @img_owner, @img_location, @img_product_ready, 
-          @img_packaging, @img_ready_to_ship, @img_id_card
-        )
-      `);
-      console.log("✅ บันทึกข้อมูลร้านค้าลง Database สำเร็จ:", shopName);
+        const request = pool.request(); // 🌟 ใช้ pool.request()
+        request.input('userId', sql.Int, userId);
+        request.input('shopName', sql.NVarChar, shopName);
+        request.input('categoryId', sql.Int, categoryId);
+        request.input('lat', sql.NVarChar, lat);
+        request.input('lng', sql.NVarChar, lng);
+        
+        request.input('sellOnline', sql.Bit, sellOnline === 'true' ? 1 : 0);
+        request.input('sellAtStore', sql.Bit, sellAtStore === 'true' ? 1 : 0);
+        request.input('sellAtHome', sql.Bit, sellAtHome === 'true' ? 1 : 0);
+        request.input('needDelivery', sql.Bit, deliveryService === 'true' ? 1 : 0);
+        request.input('needMarketing', sql.Bit, marketingSupport === 'true' ? 1 : 0);
 
-    res.status(200).json({ 
-      success: true, 
-      message: "บันทึกข้อมูลร้านค้าสำเร็จเรียบร้อยแล้ว" 
-    });
+        request.input('businessType', sql.NVarChar, businessType || 'individual');
+        request.input('hasBranches', sql.Bit, hasBranches === 'true' ? 1 : 0);
 
-  } catch (error) {
-    console.error("❌ Error registering shop:", error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-}); // 🌟 ปิด API /api/register-shop ตรงนี้ครับ
+        // รูปภาพ
+        request.input('imgOwner', sql.NVarChar, req.files['imageOwner'] ? req.files['imageOwner'][0].path : null);
+        request.input('imgLocation', sql.NVarChar, req.files['imageLocation'] ? req.files['imageLocation'][0].path : null);
+        request.input('imgProductReady', sql.NVarChar, req.files['imageProductReady'] ? req.files['imageProductReady'][0].path : null);
+        request.input('imgPackaging', sql.NVarChar, req.files['imagePackaging'] ? req.files['imagePackaging'][0].path : null);
+        request.input('imgReadyToShip', sql.NVarChar, req.files['imageReadyToShip'] ? req.files['imageReadyToShip'][0].path : null);
+        request.input('imgIdCard', sql.NVarChar, req.files['imageIdCard'] ? req.files['imageIdCard'][0].path : null);
+
+        // 🌟 บันทึกข้อมูลลงตาราง shops
+        const insertShopQuery = `
+            INSERT INTO shops (
+                user_id, category_id, shop_name, latitude, longitude,
+                sell_online, sell_at_shop, sell_at_home, need_delivery, need_marketing,
+                business_type, has_branches,
+                img_owner, img_location, img_product_ready, img_packaging, img_ready_to_ship, img_id_card,
+                status
+            ) 
+            OUTPUT INSERTED.id 
+            VALUES (
+                @userId, @categoryId, @shopName, @lat, @lng,
+                @sellOnline, @sellAtStore, @sellAtHome, @needDelivery, @needMarketing,
+                @businessType, @hasBranches,
+                @imgOwner, @imgLocation, @imgProductReady, @imgPackaging, @imgReadyToShip, @imgIdCard,
+                'PENDING'
+            );
+        `;
+
+        const result = await request.query(insertShopQuery);
+        const newShopId = result.recordset[0].id; 
+
+        // 🌟 บันทึกพิกัดลงตาราง address_shops
+        const addressRequest = pool.request(); // 🌟 ใช้ pool.request()
+        addressRequest.input('shopId', sql.Int, newShopId);
+        addressRequest.input('addressFull', sql.NVarChar, `Lat: ${lat}, Lng: ${lng}`); 
+        await addressRequest.query(`INSERT INTO address_shops (shop_id, address_full) VALUES (@shopId, @addressFull)`);
+
+        res.status(201).json({ success: true, message: 'ส่งข้อมูลเปิดร้านสำเร็จ' });
+    } catch (error) {
+        console.error("Error saving shop registration:", error);
+        res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล' });
+    }
+});
 
 
 
@@ -3374,21 +3367,34 @@ app.get('/api/shop-categories', async (req, res) => {
 // ==============================================================
 // 🛡️ API: สำหรับ Admin ดึงข้อมูลร้านค้าทั้งหมด (ดึงข้อมูลประเทศและชื่อผู้ใช้มาด้วย)
 // ==============================================================
+// =========================================================================
+// 🌟 API สำหรับ Admin: ดึงรายการร้านค้าทั้งหมดมาแสดงในตาราง
+// =========================================================================
 app.get('/api/admin/shops', async (req, res) => {
-  try {
-    let pool = await sql.connect(config);
-    // 🌟 JOIN ตาราง UsersRegister เพื่อเอา Username และ Country ของคนที่สมัครมาใช้
-    const result = await pool.request().query(`
-      SELECT s.*, u.Username, u.Country 
-      FROM shops s
-      LEFT JOIN UsersRegister u ON s.user_id = u.Id
-      ORDER BY s.id DESC
-    `);
-    res.json({ success: true, data: result.recordset });
-  } catch (error) {
-    console.error("🔥 Error fetching admin shops:", error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
+    try {
+        let pool = await sql.connect(config); // เชื่อมต่อฐานข้อมูล
+        
+        // 🌟 JOIN ตาราง shops เข้ากับ UsersRegister เพื่อดึงชื่อ Username มาแสดง
+        const result = await pool.request().query(`
+            SELECT 
+                s.id, 
+                s.shop_name, 
+                s.status, 
+                s.sell_online, 
+                s.sell_at_shop,
+                s.business_type,
+                s.has_branches,
+                u.Username AS owner_name  -- 👈 ดึง Username จากตาราง UsersRegister
+            FROM shops s
+            LEFT JOIN UsersRegister u ON s.user_id = u.id
+            ORDER BY s.id DESC
+        `);
+        
+        res.status(200).json({ success: true, data: result.recordset });
+    } catch (error) {
+        console.error("Error fetching admin shops:", error);
+        res.status(500).json({ success: false, message: 'ดึงข้อมูลร้านค้าไม่สำเร็จ' });
+    }
 });
 
 
@@ -3495,6 +3501,9 @@ app.get('/api/admin/shops/:shop_id/registration', async (req, res) => {
 // 🌟 API สำหรับ "อัปเดตข้อมูลร้านค้า" (เมื่อลูกค้ายื่นแก้ไขจากที่ถูกตีกลับ)
 // =========================================================================
 const upload = multer({ dest: 'uploads/' }); // หรือโฟลเดอร์ที่คุณใช้เก็บรูปปัจจุบัน
+// =========================================================================
+// 🌟 API สำหรับ "อัปเดตข้อมูลร้านค้า" (เมื่อลูกค้ายื่นแก้ไขจากที่ถูกตีกลับ)
+// =========================================================================
 app.put('/api/update-shop/:id', upload.fields([
     { name: 'imageOwner', maxCount: 1 },
     { name: 'imageLocation', maxCount: 1 },
@@ -3504,100 +3513,101 @@ app.put('/api/update-shop/:id', upload.fields([
     { name: 'imageIdCard', maxCount: 1 }
 ]), async (req, res) => {
     try {
+        // 🌟 1. เชื่อมต่อฐานข้อมูล
+        let pool = await sql.connect(config);
+
         const shopId = req.params.id;
         const { 
             shopName, categoryId, lat, lng, 
             sellOnline, sellAtStore, sellAtHome, 
-            deliveryService, marketingSupport 
+            deliveryService, marketingSupport,
+            businessType, hasBranches
         } = req.body;
 
-        const request = new sql.Request();
+        const request = pool.request(); // 🌟 ใช้ pool.request()
         request.input('shopId', sql.Int, shopId);
         request.input('shopName', sql.NVarChar, shopName);
         request.input('categoryId', sql.Int, categoryId);
         request.input('lat', sql.NVarChar, lat);
         request.input('lng', sql.NVarChar, lng);
         
-        // แปลงค่า 'true'/'false' จาก FormData ให้เป็น 1/0 สำหรับ SQL Bit
         request.input('sellOnline', sql.Bit, sellOnline === 'true' ? 1 : 0);
         request.input('sellAtStore', sql.Bit, sellAtStore === 'true' ? 1 : 0);
         request.input('sellAtHome', sql.Bit, sellAtHome === 'true' ? 1 : 0);
         request.input('needDelivery', sql.Bit, deliveryService === 'true' ? 1 : 0);
         request.input('needMarketing', sql.Bit, marketingSupport === 'true' ? 1 : 0);
 
-        // 🌟 สร้าง String สำหรับอัปเดตรูปภาพ (เช็คว่ามีรูปส่งมาใหม่ไหม)
-        let imageUpdateQuery = '';
-        
-        if (req.files && req.files['imageOwner']) {
-            request.input('imgOwner', sql.NVarChar, req.files['imageOwner'][0].path);
-            imageUpdateQuery += ', img_owner = @imgOwner';
-        }
-        if (req.files && req.files['imageLocation']) {
-            request.input('imgLocation', sql.NVarChar, req.files['imageLocation'][0].path);
-            imageUpdateQuery += ', img_location = @imgLocation';
-        }
-        if (req.files && req.files['imageProductReady']) {
-            request.input('imgProductReady', sql.NVarChar, req.files['imageProductReady'][0].path);
-            imageUpdateQuery += ', img_product_ready = @imgProductReady';
-        }
-        if (req.files && req.files['imagePackaging']) {
-            request.input('imgPackaging', sql.NVarChar, req.files['imagePackaging'][0].path);
-            imageUpdateQuery += ', img_packaging = @imgPackaging';
-        }
-        if (req.files && req.files['imageReadyToShip']) {
-            request.input('imgReadyToShip', sql.NVarChar, req.files['imageReadyToShip'][0].path);
-            imageUpdateQuery += ', img_ready_to_ship = @imgReadyToShip';
-        }
-        if (req.files && req.files['imageIdCard']) {
-            request.input('imgIdCard', sql.NVarChar, req.files['imageIdCard'][0].path);
-            imageUpdateQuery += ', img_id_card = @imgIdCard';
-        }
+        request.input('businessType', sql.NVarChar, businessType || 'individual');
+        request.input('hasBranches', sql.Bit, hasBranches === 'true' ? 1 : 0);
 
-        // 🌟 อัปเดตข้อมูล และเปลี่ยนสถานะกลับไปเป็น PENDING (รอตรวจสอบ) พร้อมลบประวัติการ Reject เดิมทิ้ง
+        let imageUpdateQuery = '';
+        if (req.files && req.files['imageOwner']) { request.input('imgOwner', sql.NVarChar, req.files['imageOwner'][0].path); imageUpdateQuery += ', img_owner = @imgOwner'; }
+        if (req.files && req.files['imageLocation']) { request.input('imgLocation', sql.NVarChar, req.files['imageLocation'][0].path); imageUpdateQuery += ', img_location = @imgLocation'; }
+        if (req.files && req.files['imageProductReady']) { request.input('imgProductReady', sql.NVarChar, req.files['imageProductReady'][0].path); imageUpdateQuery += ', img_product_ready = @imgProductReady'; }
+        if (req.files && req.files['imagePackaging']) { request.input('imgPackaging', sql.NVarChar, req.files['imagePackaging'][0].path); imageUpdateQuery += ', img_packaging = @imgPackaging'; }
+        if (req.files && req.files['imageReadyToShip']) { request.input('imgReadyToShip', sql.NVarChar, req.files['imageReadyToShip'][0].path); imageUpdateQuery += ', img_ready_to_ship = @imgReadyToShip'; }
+        if (req.files && req.files['imageIdCard']) { request.input('imgIdCard', sql.NVarChar, req.files['imageIdCard'][0].path); imageUpdateQuery += ', img_id_card = @imgIdCard'; }
+
         const query = `
             UPDATE shops 
             SET 
-                shop_name = @shopName,
-                category_id = @categoryId,
-                latitude = @lat,
-                longitude = @lng,
-                sell_online = @sellOnline,
-                sell_at_shop = @sellAtStore,
-                sell_at_home = @sellAtHome,
-                need_delivery = @needDelivery,
-                need_marketing = @needMarketing,
-                status = 'PENDING',
-                rejection_reasons = NULL
+                shop_name = @shopName, category_id = @categoryId, latitude = @lat, longitude = @lng,
+                sell_online = @sellOnline, sell_at_shop = @sellAtStore, sell_at_home = @sellAtHome,
+                need_delivery = @needDelivery, need_marketing = @needMarketing,
+                business_type = @businessType, has_branches = @hasBranches,
+                status = 'PENDING', rejection_reasons = NULL
                 ${imageUpdateQuery}
             WHERE id = @shopId
         `;
-
         await request.query(query);
 
-        // =====================================================================
-        // 🌟 ส่วนที่เพิ่มใหม่: บันทึกข้อมูลที่อยู่ลงตาราง address_shops
-        // =====================================================================
-        const addressRequest = new sql.Request();
+        // 🌟 อัปเดตที่อยู่
+        const addressRequest = pool.request(); // 🌟 ใช้ pool.request()
         addressRequest.input('shopId', sql.Int, shopId);
-        // สร้างข้อความพิกัดไปเก็บไว้ก่อน ถ้าในอนาคตมีส่งที่อยู่เต็มมาค่อยเปลี่ยนตรงนี้
         addressRequest.input('addressFull', sql.NVarChar, `Lat: ${lat}, Lng: ${lng}`);
 
-        // ใช้คำสั่งเพื่อเช็คว่ามีที่อยู่เดิมไหม ถ้ามีให้อัปเดต ถ้าไม่มีให้สร้างใหม่ (ป้องกัน Error)
         await addressRequest.query(`
             IF EXISTS (SELECT 1 FROM address_shops WHERE shop_id = @shopId)
                 UPDATE address_shops SET address_full = @addressFull WHERE shop_id = @shopId
             ELSE
                 INSERT INTO address_shops (shop_id, address_full) VALUES (@shopId, @addressFull)
         `);
-        // =====================================================================
 
         res.status(200).json({ success: true, message: 'อัปเดตข้อมูลคำขอเปิดร้านเรียบร้อยแล้ว' });
-
     } catch (error) {
         console.error("Error updating shop registration:", error);
         res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการอัปเดตข้อมูล' });
     }
 });
+
+
+// =========================================================================
+// 🌟 API สำหรับ Admin: อัปเดตสถานะร้านค้า (อนุมัติ หรือ ตีกลับ)
+// =========================================================================
+app.put('/api/admin/shops/:id/status', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        const shopId = req.params.id;
+        const { status, rejectionReasons } = req.body; // รับสถานะ และข้อมูลการตีกลับ(ถ้ามี)
+
+        const request = pool.request();
+        request.input('shopId', sql.Int, shopId);
+        request.input('status', sql.NVarChar, status);
+        request.input('rejectionReasons', sql.NVarChar, rejectionReasons || null);
+
+        await request.query(`
+            UPDATE shops 
+            SET status = @status, rejection_reasons = @rejectionReasons
+            WHERE id = @shopId
+        `);
+
+        res.status(200).json({ success: true, message: 'อัปเดตสถานะสำเร็จ' });
+    } catch (error) {
+        console.error("Error updating shop status:", error);
+        res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการอัปเดตสถานะ' });
+    }
+});
+
 
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
