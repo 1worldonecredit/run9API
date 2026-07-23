@@ -3628,6 +3628,44 @@ app.put('/api/admin/shops/:id/status', async (req, res) => {
 });
 
 
+// =========================================================================
+// 🌟 API ดึงข้อมูลร้านค้าของฉัน (เพื่อนำมาแสดงตอนรอตรวจ หรือ โดนตีกลับ)
+// =========================================================================
+app.get('/api/shops/my-shop', async (req, res) => {
+    try {
+        let pool = await sql.connect(config);
+        const userId = req.query.user_id;
+
+        if (!userId) {
+            return res.status(400).json({ success: false, message: 'ไม่พบรหัสผู้ใช้งาน' });
+        }
+
+        const request = pool.request();
+        request.input('userId', sql.Int, userId);
+        
+        // 🌟 ดึงข้อมูลร้านค้า JOIN กับที่อยู่ เพื่อส่งกลับไปแสดงที่หน้าเว็บ
+        const query = `
+            SELECT s.*, a.address_full, a.address_detail, a.sub_district, a.district, a.province, a.postal_code
+            FROM shops s
+            LEFT JOIN address_shops a ON s.id = a.shop_id
+            WHERE s.user_id = @userId
+        `;
+        
+        const result = await request.query(query);
+
+        if (result.recordset.length > 0) {
+            res.status(200).json(result.recordset[0]);
+        } else {
+            res.status(404).json({ success: false, message: 'ไม่พบข้อมูลร้านค้า' });
+        }
+    } catch (error) {
+        console.error("Error fetching my shop:", error);
+        res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการดึงข้อมูล' });
+    }
+});
+
+
+
 // ให้ระบบใช้ Port ของ Railway ถ้ามี แต่ถ้ารันในคอมเราให้ใช้ 5100
 const PORT = process.env.PORT || 5100;
 
